@@ -3,6 +3,8 @@
 <div align="center">
   <h3>🇱🇰 Sri Lanka's Most Complete WhatsApp News Bot</h3>
   <p>Automated news delivery from 4 sources directly to your WhatsApp group</p>
+
+  <img src="assets/botnews.png">
   
   ![Version](https://img.shields.io/badge/version-2.0.0-maroon)
   ![License](https://img.shields.io/badge/license-MIT-gold)
