@@ -5,29 +5,13 @@ const axios = require('axios');
 const Hiru = require('hirunews-scrap');
 const Derana = require('ada-derana-news-scraper');
 
-// ============================================
-// 🔧 USER CONFIGURATION - ONLY CHANGE THESE
-// ============================================
-const GROUP_JID = process.env.GROUP_JID || 'YOUR_GROUP_JID@g.us'; // 👈 CHANGE THIS to your WhatsApp group JID
-const CHECK_INTERVAL_MS = Number(process.env.CHECK_INTERVAL_MS || 120000); // Check interval (default 2 mins)
-
-// 📸 Change to your own hosted fallback images
-const DERANA_FALLBACK_IMAGE = 'YOUR_DERANA_IMAGE_URL'; // 👈 CHANGE THIS
-const CRICKET_FALLBACK_IMAGE = 'YOUR_CRICKET_IMAGE_URL'; // 👈 CHANGE THIS
-
-// ============================================
-// ⚠️ DO NOT EDIT BELOW - BOT OWNERSHIP INFO
-// ============================================
-const BOT_NAME = 'News Bot';
-const BOT_OWNER = 'Charuka Mahesh';
-const BOT_CREDITS = 'Umesha Sathyanjali | Mithila | Sharada';
-const BOT_YEAR = '2025-2026';
-const BOT_VERSION = '2.0.0';
-const GITHUB_REPO = 'https://github.com/charukamahesh922-collab/NewsBot-LK';
-// ============================================
-
+const GROUP_JID = process.env.GROUP_JID || ''; //👈 CHANGE THIS to your WhatsApp group JID
+const CHECK_INTERVAL_MS = Number(process.env.CHECK_INTERVAL_MS || 120000);
 const STATE_FILE = path.join(__dirname, 'last-news.json');
 const PID_FILE = path.join(__dirname, 'app.pid');
+
+const DERANA_FALLBACK_IMAGE = ''; //👈 CHANGE THIS to your Fallback Image  Url
+const CRICKET_FALLBACK_IMAGE = ''; //👈 CHANGE THIS to your WhatsApp group JID
 
 let sock = null;
 let reconnectTimer = null;
@@ -87,64 +71,103 @@ function saveState(state) {
   } catch (err) {}
 }
 
+// ==================== AUTO REACTIONS ====================
 const reactions = ['📰', '🔥', '👍', '💯', '👏', '🏆', '⭐', '📢'];
 
 async function autoReact(messageId) {
   if (!sock || !messageId) return;
   try {
     const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
-    await sock.sendMessage(GROUP_JID, { react: { text: randomReaction, key: messageId } });
+    await sock.sendMessage(GROUP_JID, {
+      react: {
+        text: randomReaction,
+        key: messageId
+      }
+    });
   } catch (err) {}
 }
 
+// ==================== BOT MENU ====================
 async function sendBotMenu() {
   if (!isConnected || !sock || !sock.user) return;
+
   const menuMessage = 
     `╭═══════════════════╮\n` +
-    `       📰 *${BOT_NAME}* 📰\n` +
-    `     By ${BOT_OWNER}\n` +
+    `       📰 *News Bot* 📰\n` +
+    `     By Charuka Mahesh\n` +
     `╰═══════════════════╯\n\n` +
-    `📌 *Commands:*\n` +
-    `📋 /menu - Show menu\n` +
-    `📰 /news - Fetch news now\n` +
-    `ℹ️ /info - Bot info\n` +
-    `📊 /stats - Statistics\n\n` +
-    `📡 *Sources:*\n` +
-    `🇱🇰 Hiru News (6 categories)\n` +
-    `🔴 Derana News (Hot News)\n` +
+    `📌 *Available Commands:*\n\n` +
+    `📋 */menu* - Show this menu\n` +
+    `📰 */news* - Fetch latest news now\n` +
+    `ℹ️ */info* - Bot information\n` +
+    `📊 */stats* - Show stats\n\n` +
+    `📡 *News Sources:*\n` +
+    `🇱🇰 Hiru News\n` +
+    `🔴 Derana News\n` +
     `🏏🇱🇰 Sinhala Cricket\n` +
-    `🏏🌍 English Cricket (ESPN)\n\n` +
-    `⚡ v${BOT_VERSION} | 🔄 ${CHECK_INTERVAL_MS/1000}s\n\n` +
-    `❤️ *Credits:*\n` +
-    `👨‍💻 ${BOT_OWNER}\n` +
-    `🙏 ${BOT_CREDITS}\n\n` +
-    `© ${BOT_YEAR} | ${GITHUB_REPO}`;
+    `🏏🌍 English Cricket\n\n` +
+    `🔄 Auto-check: Every 2 mins\n\n` +
+    `🙏 *Special Thanks:*\n` +
+    `❤️ Umesha Sathyanjali\n` +
+    `❤️ Mithila\n` +
+    `_\`© 2026 News Bot\`_`;
+
   try { await sock.sendMessage(GROUP_JID, { text: menuMessage }); } catch (err) {}
 }
 
 async function sendBotInfo() {
   const infoMessage = 
     `╭═══════════════════╮\n` +
-    `       📰 *${BOT_NAME}* 📰\n` +
-    `     By ${BOT_OWNER}\n` +
+    `       📰 *News Bot* 📰\n` +
+    `     By Charuka Mahesh\n` +
     `╰═══════════════════╯\n\n` +
-    `📡 *Sources Monitored:*\n` +
+    `📡 *Monitored Sources:*\n` +
     `✅ Hiru News (6 categories)\n` +
     `✅ Derana News (Hot News)\n` +
     `✅ Sinhala Cricket News\n` +
-    `✅ English Cricket (ESPN)\n\n` +
+    `✅ English Cricket News (ESPN)\n\n` +
     `⚙️ *Features:*\n` +
-    `🔄 Auto-check every ${CHECK_INTERVAL_MS/1000}s\n` +
+    `🔄 Auto-check every 2 mins\n` +
     `📸 Images with news\n` +
     `📝 Full descriptions\n` +
-    `🎯 Duplicate detection\n` +
-    `😎 Auto-reactions\n\n` +
-    `📦 Version: ${BOT_VERSION}\n` +
-    `🔗 ${GITHUB_REPO}\n\n` +
-    `© ${BOT_YEAR} ${BOT_OWNER}\n` +
-    `❤️ ${BOT_CREDITS}`;
+    `🎯 Duplicate detection\n\n` +
+    `🙏 *Credits:*\n` +
+    `👨‍💻 Charuka Mahesh\n` +
+    `❤️ Umesha Sathyanjali\n` +
+    `❤️ Mithila\n`;
+
   try { await sock.sendMessage(GROUP_JID, { text: infoMessage }); } catch (err) {}
 }
+
+// ==================== MESSAGE HANDLER ====================
+sock?.ev?.on('messages.upsert', async (m) => {
+  if (!isConnected) return;
+  
+  for (const msg of m.messages) {
+    if (!msg.message || msg.key.fromMe) continue;
+    
+    const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+    const isGroup = msg.key.remoteJid === GROUP_JID;
+    
+    if (!isGroup) continue;
+    
+    if (text === '/menu' || text === '#menu' || text === 'menu') {
+      await sendBotMenu();
+    } else if (text === '/news' || text === '#news' || text === 'news') {
+      await checkAndShareAllNewNews();
+    } else if (text === '/info' || text === '#info' || text === 'info') {
+      await sendBotInfo();
+    } else if (text === '/stats' || text === '#stats' || text === 'stats') {
+      const state = loadState();
+      const statsMsg = 
+        `📊 *Bot Stats*\n\n` +
+        `📰 Articles sent: ${state.sentUrls?.length || 0}\n` +
+        `🔄 Check interval: ${CHECK_INTERVAL_MS / 1000}s\n` +
+        `📅 Running since: 24/7 on cloud ☁️`;
+      await sock.sendMessage(GROUP_JID, { text: statsMsg });
+    }
+  }
+});
 
 async function startWhatsAppBot() {
   if (sock) return;
@@ -160,28 +183,39 @@ async function startWhatsAppBot() {
     connectTimeoutMs: 30000
   });
 
+  // Set up message handler
   sock.ev.on('messages.upsert', async (m) => {
     if (!isConnected) return;
+    
     for (const msg of m.messages) {
       if (!msg.message || msg.key.fromMe) continue;
-      const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-      if (msg.key.remoteJid !== GROUP_JID) continue;
       
-      if (text === '/menu' || text === '#menu' || text === 'menu') await sendBotMenu();
-      else if (text === '/news' || text === '#news' || text === 'news') await checkAndShareAllNewNews();
-      else if (text === '/info' || text === '#info' || text === 'info') await sendBotInfo();
-      else if (text === '/stats' || text === '#stats' || text === 'stats') {
+      const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+      const isGroup = msg.key.remoteJid === GROUP_JID;
+      
+      if (!isGroup) continue;
+      
+      if (text === '/menu' || text === '#menu' || text === 'menu') {
+        await sendBotMenu();
+      } else if (text === '/news' || text === '#news' || text === 'news') {
+        await checkAndShareAllNewNews();
+      } else if (text === '/info' || text === '#info' || text === 'info') {
+        await sendBotInfo();
+      } else if (text === '/stats' || text === '#stats' || text === 'stats') {
         const state = loadState();
-        await sock.sendMessage(GROUP_JID, { text: 
-          `📊 *Bot Stats*\n\n📰 Sent: ${state.sentUrls?.length || 0}\n🔄 Interval: ${CHECK_INTERVAL_MS/1000}s\n📦 v${BOT_VERSION}\n☁️ Running 24/7` 
-        });
+        const statsMsg = 
+          `📊 *Bot Stats*\n\n` +
+          `📰 Articles sent: ${state.sentUrls?.length || 0}\n` +
+          `🔄 Check interval: ${CHECK_INTERVAL_MS / 1000}s\n` +
+          `📅 Running 24/7 on cloud ☁️`;
+        await sock.sendMessage(GROUP_JID, { text: statsMsg });
       }
     }
   });
 
   sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
     if (qr) {
-      console.log('📱 Scan QR code in WhatsApp:');
+      console.log('Scan QR code in WhatsApp:');
       qrcode.generate(qr, { small: true });
       reconnectAttempts = 0;
     }
@@ -194,12 +228,20 @@ async function startWhatsAppBot() {
       const isReplaced = statusCode === DisconnectReason.connectionReplaced || errorMessage.includes('replaced') || errorMessage.includes('conflict');
       const shouldReconnect = !isReplaced && statusCode !== DisconnectReason.loggedOut && !isShuttingDown;
       
-      if (isReplaced) { if (reconnectTimer) clearTimeout(reconnectTimer); return; }
+      if (isReplaced) {
+        console.log('Session replaced. Stopping.');
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        return;
+      }
+      
       if (shouldReconnect) {
         if (reconnectTimer) return;
         const delay = Math.min(30000, 5000 * (reconnectAttempts + 1));
         reconnectAttempts += 1;
-        reconnectTimer = setTimeout(async () => { reconnectTimer = null; await startWhatsAppBot(); }, delay);
+        reconnectTimer = setTimeout(async () => {
+          reconnectTimer = null;
+          await startWhatsAppBot();
+        }, delay);
       }
     } else if (connection === 'open') {
       isConnected = true;
@@ -213,9 +255,13 @@ async function startWhatsAppBot() {
   sock.ev.on('creds.update', saveCreds);
 }
 
+// ==================== HIRU NEWS ====================
 async function fetchHiruNews() {
   const api = new Hiru();
-  const categories = ['BreakingNews', 'MainNews', 'TrendingNews', 'InternationalNews', 'EntertainmentNews', 'BusinessNews'];
+  const categories = [
+    'BreakingNews', 'MainNews', 'TrendingNews',
+    'InternationalNews', 'EntertainmentNews', 'BusinessNews'
+  ];
   const news = [];
   const seenUrls = new Set();
 
@@ -229,9 +275,13 @@ async function fetchHiruNews() {
       if (url && title) {
         seenUrls.add(url);
         news.push({
-          source: '🇱🇰 Hiru', category: category.replace('News', ''),
-          title, description: (newsItem.results.news || '').replace(/\s+/g, ' ').trim(),
-          url, image: newsItem.results.thumb || '', date: newsItem.results.date || ''
+          source: '🇱🇰 Hiru',
+          category: category.replace('News', ''),
+          title: title,
+          description: (newsItem.results.news || '').replace(/\s+/g, ' ').trim(),
+          url: url,
+          image: newsItem.results.thumb || '',
+          date: newsItem.results.date || ''
         });
       }
     } catch (err) {}
@@ -239,6 +289,7 @@ async function fetchHiruNews() {
   return news;
 }
 
+// ==================== DERANA NEWS (FIXED) ====================
 async function fetchDeranaNews() {
   const news = [];
   try {
@@ -249,17 +300,36 @@ async function fetchDeranaNews() {
           const articleUrl = article.url || '';
           const articleTitle = article.title || '';
           if (articleUrl && articleTitle) {
+            // Get the longest description from all fields
             let description = '';
             const descFields = ['content', 'description', 'summary', 'text', 'body', 'fullText'];
             for (const field of descFields) {
-              if (article[field] && article[field].length > description.length) description = article[field];
+              if (article[field] && article[field].length > description.length) {
+                description = article[field];
+              }
             }
             if (!description) description = articleTitle;
-            description = description.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
+            
+            // Clean description - preserve full text
+            description = description
+              .replace(/<[^>]*>/g, '')
+              .replace(/&amp;/g, '&')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&quot;/g, '"')
+              .replace(/\s+/g, ' ')
+              .trim();
+            
+            console.log(`🔴 Derana: ${articleTitle.substring(0, 50)}... [${description.length} chars]`);
             
             news.push({
-              source: '🔴 Derana', category: 'Hot News', title: articleTitle,
-              description, url: articleUrl, image: DERANA_FALLBACK_IMAGE, date: article.time || ''
+              source: '🔴 Derana',
+              category: 'Hot News',
+              title: articleTitle,
+              description: description,
+              url: articleUrl,
+              image: DERANA_FALLBACK_IMAGE, // Always use GitHub image
+              date: article.time || ''
             });
           }
         });
@@ -269,21 +339,41 @@ async function fetchDeranaNews() {
   return news;
 }
 
+// ==================== SINHALA CRICKET NEWS ====================
 async function fetchSinhalaCricketNews() {
   const news = [];
   try {
     const api = new Hiru();
-    for (const category of ['SportNews', 'SportsNews']) {
+    const sportsCategories = ['SportNews', 'SportsNews'];
+    
+    for (const category of sportsCategories) {
       if (typeof api[category] !== 'function') continue;
       try {
         const newsItem = await api[category]();
         const url = newsItem?.results?.newsURL;
         const title = newsItem?.results?.title || '';
         const description = (newsItem?.results?.news || '').replace(/\s+/g, ' ').trim();
-        const cricketKeywords = ['ක්‍රිකට්', 'cricket', 'Cricket', 'ටෙස්ට්', 'එක්දින', 'විස්සයි20', 'T20', 'ODI', 'පන්දු', 'දැවී', 'ලකුණු', 'ඉනිම', 'පිතිකරු', 'පන්දු යවන්නා', 'කඩුල්ල'];
-        const isCricket = cricketKeywords.some(k => title.includes(k) || description.includes(k));
+        
+        const cricketKeywords = [
+          'ක්‍රිකට්', 'cricket', 'Cricket', 'ටෙස්ට්', 'එක්දින', 
+          'විස්සයි20', 'T20', 'ODI', 'පන්දු', 'දැවී', 'ලකුණු',
+          'ඉනිම', 'පිතිකරු', 'පන්දු යවන්නා', 'කඩුල්ල'
+        ];
+        
+        const isCricket = cricketKeywords.some(keyword => 
+          title.includes(keyword) || description.includes(keyword)
+        );
+        
         if (url && title && isCricket && description) {
-          news.push({ source: '🏏🇱🇰 Cricket', category: 'Sinhala Cricket', title, description, url, image: CRICKET_FALLBACK_IMAGE, date: newsItem.results.date || '' });
+          news.push({
+            source: '🏏🇱🇰 Cricket',
+            category: 'Sinhala Cricket',
+            title: title,
+            description: description,
+            url: url,
+            image: CRICKET_FALLBACK_IMAGE,
+            date: newsItem.results.date || ''
+          });
         }
       } catch (err) {}
     }
@@ -291,10 +381,15 @@ async function fetchSinhalaCricketNews() {
   return news;
 }
 
+// ==================== ENGLISH CRICKET NEWS ====================
 async function fetchEnglishCricketNews() {
   const news = [];
   try {
-    const response = await axios.get('https://www.espncricinfo.com/rss/content/story/feeds/8.xml', { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const response = await axios.get('https://www.espncricinfo.com/rss/content/story/feeds/8.xml', {
+      timeout: 15000,
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    
     const xml = response.data;
     const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
     let match;
@@ -320,7 +415,16 @@ async function fetchEnglishCricketNews() {
           if (full.length > 100) description = full;
         }
         description = description.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
-        news.push({ source: '🏏🌍 Cricket', category: 'English Cricket', title: article.title, description, url: article.url, image: CRICKET_FALLBACK_IMAGE, date: article.date });
+        
+        news.push({
+          source: '🏏🌍 Cricket',
+          category: 'English Cricket',
+          title: article.title,
+          description: description,
+          url: article.url,
+          image: CRICKET_FALLBACK_IMAGE,
+          date: article.date
+        });
         await new Promise(r => setTimeout(r, 500));
       } catch (err) {}
     }
@@ -328,69 +432,134 @@ async function fetchEnglishCricketNews() {
   return news;
 }
 
+// ==================== COMBINED FETCH ====================
 async function fetchAllLatestNews() {
-  const [hiru, derana, sCricket, eCricket] = await Promise.all([fetchHiruNews(), fetchDeranaNews(), fetchSinhalaCricketNews(), fetchEnglishCricketNews()]);
-  const allNews = [...hiru, ...derana, ...sCricket, ...eCricket];
-  const unique = [];
-  const seen = new Set();
-  for (const n of allNews) { if (n.url && !seen.has(n.url)) { seen.add(n.url); unique.push(n); } }
-  return unique;
+  const [hiruNews, deranaNews, sinhalaCricket, englishCricket] = await Promise.all([
+    fetchHiruNews(), fetchDeranaNews(), fetchSinhalaCricketNews(), fetchEnglishCricketNews()
+  ]);
+
+  const allNews = [...hiruNews, ...deranaNews, ...sinhalaCricket, ...englishCricket];
+  const uniqueNews = [];
+  const seenUrls = new Set();
+
+  for (const news of allNews) {
+    if (news.url && !seenUrls.has(news.url)) {
+      seenUrls.add(news.url);
+      uniqueNews.push(news);
+    }
+  }
+  return uniqueNews;
 }
 
 async function sendConnectionNotice() {
-  if (!isConnected || !sock?.user) return;
-  const msg = `╭═══════════════════╮\n       📰 *${BOT_NAME}* 📰\n     By ${BOT_OWNER}\n╰═══════════════════╯\n\n✅ Bot Connected!\n\n📡 Sources: 🇱🇰 Hiru | 🔴 Derana | 🏏 Cricket\n🔄 Auto-check: ${CHECK_INTERVAL_MS/1000}s\n\n📋 /menu for commands\n\n❤️ ${BOT_CREDITS}`;
-  try { await sock.sendMessage(GROUP_JID, { text: msg }); } catch (err) {}
+  if (!isConnected || !sock || !sock.user) return;
+
+  const message = 
+    `╭═══════════════════╮\n` +
+    `       📰 *News Bot* 📰\n` +
+    `     By Charuka Mahesh\n` +
+    `╰═══════════════════╯\n\n` +
+    `✅ Bot Connected!\n\n` +
+    `📡 *Sources:*\n` +
+    `🇱🇰 Hiru | 🔴 Derana\n` +
+    `🏏 Sinhala & English Cricket\n\n` +
+    `🔄 Auto-check every 2 mins\n\n` +
+    `📋 Type */menu* for commands\n\n` +
+    `🙏 Umesha | Mithila`;
+
+  try { await sock.sendMessage(GROUP_JID, { text: message }); } catch (err) {}
 }
 
+// ==================== SEND NEWS WITH IMAGES ====================
 async function sendNewsToGroup(newsItem) {
-  if (!isConnected || !sock?.user) return false;
-  const { title = 'News', description = '', url = '', date = '', source = '', category = '', image = '' } = newsItem;
-  const cleanDesc = description.replace(/\s+/g, ' ').trim();
-  
-  const msg = `╭───────────────────╮\n    📰 *${BOT_NAME}* 📰\n  By ${BOT_OWNER}\n╰───────────────────╯\n\n${source} | 📂 ${category}\n\n*${title}*\n\n📌 ${cleanDesc}\n\n${date ? `📅 ${date}\n\n` : ''}🔗 ${url}\n\n_\`❤️ ${BOT_CREDITS}\`_`;
+  if (!isConnected || !sock || !sock.user) return false;
+
+  const title = newsItem.title || 'News';
+  const description = (newsItem.description || '').replace(/\s+/g, ' ').trim();
+  const url = newsItem.url || '';
+  const date = newsItem.date || '';
+  const source = newsItem.source || '';
+  const category = newsItem.category || '';
+  const image = newsItem.image || '';
+
+  const message = 
+    `╭───────────────────╮\n` +
+    `    📰 *News Bot* 📰\n` +
+    `  By Charuka Mahesh\n` +
+    `╰───────────────────╯\n\n` +
+    `${source} | 📂 ${category}\n\n` +
+    `*${title}*\n\n` +
+    `📌 ${description}\n\n` +
+    `${date ? `📅 ${date}\n\n` : ''}` +
+    `🔗 ${url}\n\n` +
+    `_\`🙏 Umesha | Mithila\`_`;
 
   try {
+    // Try sending with image
     if (image) {
       try {
-        const sent = await sock.sendMessage(GROUP_JID, { image: { url: image }, caption: msg, mimetype: 'image/jpeg' });
-        await autoReact(sent.key);
-        console.log(`📤 [IMG] ${source}: ${title.substring(0, 40)}... [${cleanDesc.length} chars]`);
+        const sentMsg = await sock.sendMessage(GROUP_JID, {
+          image: { url: image },
+          caption: message,
+          mimetype: 'image/jpeg'
+        });
+        // Auto-react to own message
+        await autoReact(sentMsg.key);
+        console.log(`📤 [IMG] ${source}: ${title.substring(0, 40)}... [${description.length} chars]`);
         return true;
-      } catch (imgErr) {}
+      } catch (imgErr) {
+        console.log(`⚠️ Image failed, using text...`);
+      }
     }
-    const sent = await sock.sendMessage(GROUP_JID, { text: msg });
-    await autoReact(sent.key);
-    console.log(`📤 [TXT] ${source}: ${title.substring(0, 40)}... [${cleanDesc.length} chars]`);
+    
+    // Text fallback
+    const sentMsg = await sock.sendMessage(GROUP_JID, { text: message });
+    await autoReact(sentMsg.key);
+    console.log(`📤 [TXT] ${source}: ${title.substring(0, 40)}... [${description.length} chars]`);
     return true;
-  } catch (err) { return false; }
+  } catch (err) {
+    return false;
+  }
 }
 
 async function checkAndShareAllNewNews() {
-  if (!isConnected || !sock?.user) return;
+  if (!isConnected || !sock || !sock.user) return;
+
   try {
     const allNews = await fetchAllLatestNews();
-    if (!allNews.length) return;
+    if (allNews.length === 0) return;
+
     const state = loadState();
-    let sent = 0;
-    for (const item of allNews) {
-      if (!item.url || state.sentUrls.includes(item.url)) continue;
-      if (await sendNewsToGroup(item)) { state.sentUrls.push(item.url); sent++; saveState(state); }
-      await new Promise(r => setTimeout(r, 4000));
+    let newArticlesSent = 0;
+
+    for (const newsItem of allNews) {
+      if (!newsItem.url) continue;
+      if (state.sentUrls.includes(newsItem.url)) continue;
+
+      const sent = await sendNewsToGroup(newsItem);
+      if (sent) {
+        state.sentUrls.push(newsItem.url);
+        newArticlesSent++;
+        saveState(state);
+      }
+      await new Promise(resolve => setTimeout(resolve, 4000));
     }
-    console.log(sent > 0 ? `✅ Sent ${sent} articles` : 'No new articles.');
-  } catch (err) { console.error('Check failed:', err.message); }
+
+    console.log(newArticlesSent > 0 ? `✅ Sent ${newArticlesSent} new articles` : 'No new articles.');
+  } catch (err) {
+    console.error('Check failed:', err.message);
+  }
 }
 
 (async () => {
-  console.log(`📰 ${BOT_NAME} by ${BOT_OWNER}`);
-  console.log(`❤️ Credits: ${BOT_CREDITS}`);
-  console.log(`📦 v${BOT_VERSION} | 🔗 ${GITHUB_REPO}`);
+  console.log('📰 News Bot by Charuka Mahesh');
+  console.log('🙏 Thanks: Umesha Sathyanjali | Mithila Sharadha');
   
   const dir = path.dirname(STATE_FILE);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   
   await ensureSingleInstance();
   await startWhatsAppBot();
+
   setInterval(() => checkAndShareAllNewNews(), CHECK_INTERVAL_MS);
 })();
