@@ -75,3 +75,120 @@ Choose any platform below to deploy your bot 24/7 for FREE:
 3. Go to **[KataBump.com](https://katabump.com)** → Sign Up
 4. **Create New App** → Connect your forked repo
 5. Set **Environment Variables**:
+
+````
+GROUP_JID = your_group_jid@g.us
+CHECK_INTERVAL_MS = 120000
+````
+
+6. Click **Deploy**
+7. Scan QR code from logs with WhatsApp
+
+✅ **Done! Free 24/7 hosting!**
+
+---
+
+## 🔵 Option 2: Render (Easy)
+
+**Free tier: 720 hours/month (enough for 24/7)**
+
+1. **Fork this repository** on GitHub
+2. Go to **[Render.com](https://render.com)** → Sign Up
+3. Click **New + → Web Service**
+4. Connect your forked GitHub repo
+5. Configure:
+
+````
+Name: newsbot-lk
+Runtime: Node
+Build Command: npm install
+Start Command: node index.js
+````
+
+6. Add **Environment Variables**:
+
+````
+GROUP_JID = your_group_jid@g.us
+CHECK_INTERVAL_MS = 120000
+````
+
+7. Click **Create Web Service**
+8. Scan QR code from logs
+
+✅ **Done! Free for 720 hours/month!**
+
+---
+
+## 🟠 Option 3: Koyeb (Medium)
+
+**Free tier: 1 web service + 1 worker**
+
+1. **Fork this repository** on GitHub
+2. Go to **[Koyeb.com](https://koyeb.com)** → Sign Up
+3. Click **Create App**
+4. Choose **GitHub** → Select your forked repo
+5. Configure:
+
+````
+Type: Web Service
+Port: 3000
+Run command: node index.js
+````
+
+6. Add **Environment Variables**:
+
+````
+GROUP_JID = your_group_jid@g.us
+CHECK_INTERVAL_MS = 120000
+````
+
+7. Click **Deploy**
+8. Scan QR code from logs
+
+✅ **Done! Free tier deployed!**
+
+---
+
+## 🟣 Option 4: Heroku (Paid)
+
+**Note: Heroku no longer has free tier**
+
+1. Install [Heroku CLI](https://devcenter.heroku.com/articles/heroku-cli)
+2. Login: `heroku login`
+3. Create app: `heroku create newsbot-lk`
+4. Set environment variables:
+```
+heroku config:set GROUP_JID=your_group_jid@g.us
+heroku config:set CHECK_INTERVAL_MS=120000
+```
+
+    Deploy: git push heroku main
+
+    Scale: heroku ps:scale web=1
+
+    Check logs: heroku logs --tail
+
+    Scan QR code from logs
+
+✅ Done! (Requires paid dyno)
+
+📦 Run Locally (Without Cloud)
+
+````
+# Clone the repo
+git clone https://github.com/YOUR_USERNAME/NewsBot-LK.git
+cd NewsBot-LK
+
+# Install dependencies
+npm install
+
+# Edit GROUP_JID in index.js
+nano index.js
+
+# Run the bot
+node index.js
+
+# Scan QR code with WhatsApp
+# Bot runs as long as your PC is on
+
+````
