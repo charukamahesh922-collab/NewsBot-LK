@@ -5,561 +5,151 @@ const axios = require('axios');
 const Hiru = require('hirunews-scrap');
 const Derana = require('ada-derana-news-scraper');
 
-const GROUP_JID = process.env.GROUP_JID || ''; //👈 CHANGE THIS to your WhatsApp group JID
-const CHECK_INTERVAL_MS = Number(process.env.CHECK_INTERVAL_MS || 120000);
-const STATE_FILE = path.join(__dirname, 'last-news.json');
-const PID_FILE = path.join(__dirname, 'app.pid');
+try { if (fs.existsSync(path.join(__dirname, 'app.pid'))) fs.unlinkSync(path.join(__dirname, 'app.pid')); } catch (e) {}
 
-const DERANA_FALLBACK_IMAGE = ''; //👈 CHANGE THIS to your Fallback Image  Url
-const CRICKET_FALLBACK_IMAGE = ''; //👈 CHANGE THIS to your WhatsApp group JID
+const GROUP_JID = process.env.GROUP_JID || '120363427636501059@g.us';
+const OWNER_JID = process.env.OWNER_JID || '94784745155@s.whatsapp.net';
+const CHECK_INTERVAL_MS = Number(process.env.CHECK_INTERVAL_MS || 60000);
+const STATE_FILE = path.join(__dirname, 'last-news.json');
+const SAVE_FOLDER = path.join(__dirname, 'saved_media');
+
+if (!fs.existsSync(SAVE_FOLDER)) fs.mkdirSync(SAVE_FOLDER, { recursive: true });
+
+const BOT_LOGO = 'https://raw.githubusercontent.com/charukamahesh922-collab/NewsBot-LK/refs/heads/main/Assetes/botnews.png';
+const ESANA_API_URL = 'https://esena-news-api-v3.vercel.app/';
+const FALLBACK_IMAGE = 'https://raw.githubusercontent.com/charukamahesh922-collab/Mahawilachchiya-Sports/refs/heads/main/dearan.jpeg';
+
+const STATUS_EMOJIS = ['❤️', '🔥', '👍', '💯', '👏', '😍', '✨', '🌟', '💫', '🎉'];
+const reactions = ['📰', '🔥', '👍', '💯', '👏', '🏆', '⭐', '📢'];
 
 let sock = null;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
 let isConnected = false;
 let isShuttingDown = false;
+let lastStatusProcessTime = 0;
+const STATUS_COOLDOWN = 3000;
 
-async function ensureSingleInstance() {
-  let stalePid = null;
+function loadState() { try { if (fs.existsSync(STATE_FILE)) { const s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); if (!s.sentUrls) s.sentUrls = []; return s; } } catch (e) {} return { sentUrls: [] }; }
+function saveState(s) { try { if (s.sentUrls?.length > 10000) s.sentUrls = s.sentUrls.slice(-10000); fs.writeFileSync(STATE_FILE + '.tmp', JSON.stringify(s, null, 2)); fs.renameSync(STATE_FILE + '.tmp', STATE_FILE); } catch (e) {} }
+
+async function autoReact(mid) { if (!sock || !mid) return; try { await sock.sendMessage(GROUP_JID, { react: { text: reactions[Math.floor(Math.random() * reactions.length)], key: mid } }); } catch (e) {} }
+
+async function scrapeArticle(url) {
   try {
-    const existingPid = fs.readFileSync(PID_FILE, 'utf8').trim();
-    if (existingPid && existingPid !== String(process.pid)) {
-      try {
-        process.kill(Number(existingPid), 0);
-        stalePid = Number(existingPid);
-        console.log(`Stopping previous instance ${stalePid}...`);
-        process.kill(stalePid, 'SIGTERM');
-      } catch { fs.unlinkSync(PID_FILE); }
+    const res = await axios.get(url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } });
+    const html = res.data;
+    const paragraphs = html.match(/<p[^>]*>([\s\S]*?)<\/p>/gi);
+    if (paragraphs) {
+      return paragraphs.map(p => p.replace(/<[^>]*>/g, '').trim())
+        .filter(p => p.length > 40 && !p.includes('function(') && !p.includes('Copyright') && !p.includes('var ') && !p.includes('Solution by') && !p.includes('Technology Partner') && !p.includes('Fortunacreatives'))
+        .join('\n\n')
+        .replace(/&zwj;/g, '').replace(/&zwnj;/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
     }
-  } catch {}
-
-  if (stalePid) {
-    const started = Date.now();
-    while (Date.now() - started < 5000) {
-      try { process.kill(stalePid, 0); await new Promise(r => setTimeout(r, 250)); } 
-      catch { break; }
-    }
-    try { process.kill(stalePid, 'SIGKILL'); } catch {}
-  }
-  fs.writeFileSync(PID_FILE, String(process.pid));
+  } catch (e) {}
+  return '';
 }
 
-function releaseSingleInstance() {
-  try { if (fs.readFileSync(PID_FILE, 'utf8').trim() === String(process.pid)) fs.unlinkSync(PID_FILE); } catch {}
+// ==================== CONNECTION NOTICE WITH BOT LOGO ====================
+async function sendConnectionNotice() {
+  if (!isConnected || !sock?.user) return;
+  const msg = `💝 News Bot 💝\n\n✅ Connected\n📡 6 Sources\n🔄 Every 1 min\n\n📋 /menu\n📰 /news\n📊 /stats\n💾 /save\n\nＢʏ Ｃʜᴀʀᴜᴋᴀ Ｍᴀʜᴇꜱʜ\n💛 Umesha & Mithila`;
+  try { await sock.sendMessage(OWNER_JID, { image: { url: BOT_LOGO }, caption: msg, mimetype: 'image/png' }); console.log('📨 Connection sent with logo'); } catch (e) { await sock.sendMessage(OWNER_JID, { text: msg }); }
 }
 
-process.on('exit', releaseSingleInstance);
-process.on('SIGINT', () => { isShuttingDown = true; releaseSingleInstance(); process.exit(0); });
-process.on('SIGTERM', () => { isShuttingDown = true; releaseSingleInstance(); process.exit(0); });
-
-function loadState() {
-  try {
-    if (fs.existsSync(STATE_FILE)) {
-      const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-      if (!state.sentUrls || !Array.isArray(state.sentUrls)) state.sentUrls = [];
-      return state;
-    }
-  } catch (err) {}
-  return { sentUrls: [] };
+// ==================== MENU WITH BOT LOGO ====================
+async function sendBotMenu(jid) {
+  if (!isConnected || !sock?.user) return;
+  const msg = `💝 News Bot 💝\n\n📌 *Commands*\n\n📋 /menu - Menu\n📰 /news - Fetch News\n📊 /stats - Statistics\n💾 /save - Save Media\n\n📡 *Sources*\nHiru | Derana | Esana\nAdaDerana | Cricket\n\nＢʏ Ｃʜᴀʀᴜᴋᴀ Ｍᴀʜᴇꜱʜ\n💛 Umesha & Mithila`;
+  try { await sock.sendMessage(jid || GROUP_JID, { image: { url: BOT_LOGO }, caption: msg, mimetype: 'image/png' }); } catch (e) { await sock.sendMessage(jid || GROUP_JID, { text: msg }); }
 }
 
-function saveState(state) {
-  try {
-    if (state.sentUrls?.length > 5000) state.sentUrls = state.sentUrls.slice(-5000);
-    fs.writeFileSync(STATE_FILE + '.tmp', JSON.stringify(state, null, 2));
-    fs.renameSync(STATE_FILE + '.tmp', STATE_FILE);
-  } catch (err) {}
+async function autoViewAndReact(statusMsg) {
+  if (!sock || !isConnected) return;
+  const now = Date.now();
+  if (now - lastStatusProcessTime < STATUS_COOLDOWN) return;
+  try { const { key } = statusMsg; if (!key || key.fromMe) return; const so = key.participant || key.remoteJid; if (so === sock.user?.id) return; lastStatusProcessTime = now; await sock.readMessages([key]); const emoji = STATUS_EMOJIS[Math.floor(Math.random() * STATUS_EMOJIS.length)]; try { await sock.sendMessage('status@broadcast', { react: { text: emoji, key: key } }); } catch (e) {} } catch (err) {}
 }
 
-// ==================== AUTO REACTIONS ====================
-const reactions = ['📰', '🔥', '👍', '💯', '👏', '🏆', '⭐', '📢'];
-
-async function autoReact(messageId) {
-  if (!sock || !messageId) return;
-  try {
-    const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
-    await sock.sendMessage(GROUP_JID, {
-      react: {
-        text: randomReaction,
-        key: messageId
-      }
-    });
-  } catch (err) {}
+async function saveMedia(msg) {
+  if (!sock || !msg) return null;
+  try { const { message } = msg; const type = Object.keys(message)[0]; let buf = null, ext = '.bin'; if (type === 'imageMessage') { buf = await sock.downloadMediaMessage(msg); ext = '.jpg'; } else if (type === 'videoMessage') { buf = await sock.downloadMediaMessage(msg); ext = '.mp4'; } else if (type === 'stickerMessage') { buf = await sock.downloadMediaMessage(msg); ext = '.webp'; } if (buf) { const fp = path.join(SAVE_FOLDER, `saved_${Date.now()}${ext}`); fs.writeFileSync(fp, buf); return { fp, buf, type }; } } catch (e) {} return null;
 }
-
-// ==================== BOT MENU ====================
-async function sendBotMenu() {
-  if (!isConnected || !sock || !sock.user) return;
-
-  const menuMessage = 
-    `╭═══════════════════╮\n` +
-    `       📰 *News Bot* 📰\n` +
-    `     By Charuka Mahesh\n` +
-    `╰═══════════════════╯\n\n` +
-    `📌 *Available Commands:*\n\n` +
-    `📋 */menu* - Show this menu\n` +
-    `📰 */news* - Fetch latest news now\n` +
-    `ℹ️ */info* - Bot information\n` +
-    `📊 */stats* - Show stats\n\n` +
-    `📡 *News Sources:*\n` +
-    `🇱🇰 Hiru News\n` +
-    `🔴 Derana News\n` +
-    `🏏🇱🇰 Sinhala Cricket\n` +
-    `🏏🌍 English Cricket\n\n` +
-    `🔄 Auto-check: Every 2 mins\n\n` +
-    `🙏 *Special Thanks:*\n` +
-    `❤️ Umesha Sathyanjali\n` +
-    `❤️ Mithila\n` +
-    `_\`© 2026 News Bot\`_`;
-
-  try { await sock.sendMessage(GROUP_JID, { text: menuMessage }); } catch (err) {}
-}
-
-async function sendBotInfo() {
-  const infoMessage = 
-    `╭═══════════════════╮\n` +
-    `       📰 *News Bot* 📰\n` +
-    `     By Charuka Mahesh\n` +
-    `╰═══════════════════╯\n\n` +
-    `📡 *Monitored Sources:*\n` +
-    `✅ Hiru News (6 categories)\n` +
-    `✅ Derana News (Hot News)\n` +
-    `✅ Sinhala Cricket News\n` +
-    `✅ English Cricket News (ESPN)\n\n` +
-    `⚙️ *Features:*\n` +
-    `🔄 Auto-check every 2 mins\n` +
-    `📸 Images with news\n` +
-    `📝 Full descriptions\n` +
-    `🎯 Duplicate detection\n\n` +
-    `🙏 *Credits:*\n` +
-    `👨‍💻 Charuka Mahesh\n` +
-    `❤️ Umesha Sathyanjali\n` +
-    `❤️ Mithila\n`;
-
-  try { await sock.sendMessage(GROUP_JID, { text: infoMessage }); } catch (err) {}
-}
-
-// ==================== MESSAGE HANDLER ====================
-sock?.ev?.on('messages.upsert', async (m) => {
-  if (!isConnected) return;
-  
-  for (const msg of m.messages) {
-    if (!msg.message || msg.key.fromMe) continue;
-    
-    const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-    const isGroup = msg.key.remoteJid === GROUP_JID;
-    
-    if (!isGroup) continue;
-    
-    if (text === '/menu' || text === '#menu' || text === 'menu') {
-      await sendBotMenu();
-    } else if (text === '/news' || text === '#news' || text === 'news') {
-      await checkAndShareAllNewNews();
-    } else if (text === '/info' || text === '#info' || text === 'info') {
-      await sendBotInfo();
-    } else if (text === '/stats' || text === '#stats' || text === 'stats') {
-      const state = loadState();
-      const statsMsg = 
-        `📊 *Bot Stats*\n\n` +
-        `📰 Articles sent: ${state.sentUrls?.length || 0}\n` +
-        `🔄 Check interval: ${CHECK_INTERVAL_MS / 1000}s\n` +
-        `📅 Running since: 24/7 on cloud ☁️`;
-      await sock.sendMessage(GROUP_JID, { text: statsMsg });
-    }
-  }
-});
 
 async function startWhatsAppBot() {
   if (sock) return;
-
   const baileys = await import('@whiskeysockets/baileys');
   const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = baileys;
   const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'auth_info_baileys'));
+  sock = makeWASocket({ auth: state, browser: ['NewsBot', 'Chrome', '1.0.0'], markOnlineOnConnect: false, connectTimeoutMs: 30000 });
 
-  sock = makeWASocket({
-    auth: state,
-    browser: ['NewsBot', 'Chrome', '1.0.0'],
-    markOnlineOnConnect: false,
-    connectTimeoutMs: 30000
-  });
-
-  // Set up message handler
   sock.ev.on('messages.upsert', async (m) => {
     if (!isConnected) return;
-    
     for (const msg of m.messages) {
-      if (!msg.message || msg.key.fromMe) continue;
+      if (!msg.message) continue;
+      const jid = msg.key.remoteJid;
+      if (jid === 'status@broadcast') { await autoViewAndReact(msg); continue; }
+      if (msg.key.fromMe) continue;
+      let rawText = '';
+      if (msg.message.conversation) rawText = msg.message.conversation;
+      else if (msg.message.extendedTextMessage?.text) rawText = msg.message.extendedTextMessage.text;
+      else if (msg.message.imageMessage?.caption) rawText = msg.message.imageMessage.caption;
+      else if (msg.message.videoMessage?.caption) rawText = msg.message.videoMessage.caption;
+      const lowerText = rawText.trim().toLowerCase();
       
-      const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-      const isGroup = msg.key.remoteJid === GROUP_JID;
-      
-      if (!isGroup) continue;
-      
-      if (text === '/menu' || text === '#menu' || text === 'menu') {
-        await sendBotMenu();
-      } else if (text === '/news' || text === '#news' || text === 'news') {
-        await checkAndShareAllNewNews();
-      } else if (text === '/info' || text === '#info' || text === 'info') {
-        await sendBotInfo();
-      } else if (text === '/stats' || text === '#stats' || text === 'stats') {
-        const state = loadState();
-        const statsMsg = 
-          `📊 *Bot Stats*\n\n` +
-          `📰 Articles sent: ${state.sentUrls?.length || 0}\n` +
-          `🔄 Check interval: ${CHECK_INTERVAL_MS / 1000}s\n` +
-          `📅 Running 24/7 on cloud ☁️`;
-        await sock.sendMessage(GROUP_JID, { text: statsMsg });
+      if (lowerText.startsWith('/save') || lowerText.startsWith('#save')) {
+        const ctx = msg.message.extendedTextMessage?.contextInfo;
+        if (ctx?.quotedMessage && ctx?.stanzaId) {
+          const fm = { key: { remoteJid: jid, id: ctx.stanzaId }, message: ctx.quotedMessage };
+          const saved = await saveMedia(fm);
+          if (saved) { const mt = Object.keys(ctx.quotedMessage)[0]; if (mt === 'imageMessage') await sock.sendMessage(jid, { image: saved.buf, caption: '💾 Saved!' }); else if (mt === 'videoMessage') await sock.sendMessage(jid, { video: saved.buf, caption: '💾 Saved!' }); else if (mt === 'stickerMessage') await sock.sendMessage(jid, { sticker: saved.buf }); }
+          else await sock.sendMessage(jid, { text: '❌ Failed!' });
+        } else await sock.sendMessage(jid, { text: '💡 Reply to media with /save' });
+        continue;
       }
+      if (lowerText === '/menu' || lowerText === '#menu' || lowerText === 'menu') await sendBotMenu(jid);
+      else if (lowerText === '/news' || lowerText === '#news' || lowerText === 'news') { if (jid === GROUP_JID) await checkAndShareAllNewNews(); else await sock.sendMessage(jid, { text: '📰 Works only in group.' }); }
+      else if (lowerText === '/stats' || lowerText === '#stats' || lowerText === 'stats') { const st = loadState(); await sock.sendMessage(jid, { image: { url: BOT_LOGO }, caption: `💝 News Bot 💝\n\n📊 *Stats*\n📰 Sent: *${st.sentUrls?.length || 0}*\n🔄 Every: *${CHECK_INTERVAL_MS/1000}s*\n📡 Sources: *6*\n\nＢʏ Ｃʜᴀʀᴜᴋᴀ Ｍᴀʜᴇꜱʜ\n💛 Umesha & Mithila`, mimetype: 'image/png' }); }
     }
   });
 
   sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-    if (qr) {
-      console.log('Scan QR code in WhatsApp:');
-      qrcode.generate(qr, { small: true });
-      reconnectAttempts = 0;
-    }
-
-    if (connection === 'close') {
-      isConnected = false;
-      sock = null;
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const errorMessage = lastDisconnect?.error?.message || '';
-      const isReplaced = statusCode === DisconnectReason.connectionReplaced || errorMessage.includes('replaced') || errorMessage.includes('conflict');
-      const shouldReconnect = !isReplaced && statusCode !== DisconnectReason.loggedOut && !isShuttingDown;
-      
-      if (isReplaced) {
-        console.log('Session replaced. Stopping.');
-        if (reconnectTimer) clearTimeout(reconnectTimer);
-        return;
-      }
-      
-      if (shouldReconnect) {
-        if (reconnectTimer) return;
-        const delay = Math.min(30000, 5000 * (reconnectAttempts + 1));
-        reconnectAttempts += 1;
-        reconnectTimer = setTimeout(async () => {
-          reconnectTimer = null;
-          await startWhatsAppBot();
-        }, delay);
-      }
-    } else if (connection === 'open') {
-      isConnected = true;
-      reconnectAttempts = 0;
-      console.log('✅ WhatsApp connected');
-      await sendConnectionNotice();
-      await checkAndShareAllNewNews();
-    }
+    if (qr) { console.log('Scan QR:'); qrcode.generate(qr, { small: true }); reconnectAttempts = 0; }
+    if (connection === 'close') { isConnected = false; sock = null; const code = lastDisconnect?.error?.output?.statusCode; if (code !== DisconnectReason.loggedOut && !isShuttingDown) { const delay = Math.min(30000, 5000 * (reconnectAttempts + 1)); reconnectAttempts++; reconnectTimer = setTimeout(async () => { reconnectTimer = null; await startWhatsAppBot(); }, delay); } }
+    else if (connection === 'open') { isConnected = true; reconnectAttempts = 0; console.log('✅ WhatsApp connected'); await sendConnectionNotice(); await checkAndShareAllNewNews(); }
   });
-
   sock.ev.on('creds.update', saveCreds);
 }
 
-// ==================== HIRU NEWS ====================
-async function fetchHiruNews() {
-  const api = new Hiru();
-  const categories = [
-    'BreakingNews', 'MainNews', 'TrendingNews',
-    'InternationalNews', 'EntertainmentNews', 'BusinessNews'
-  ];
-  const news = [];
-  const seenUrls = new Set();
+async function fetchHiruNews() { const api = new Hiru(); const cats = ['BreakingNews', 'MainNews', 'TrendingNews', 'InternationalNews', 'EntertainmentNews', 'BusinessNews']; const news = []; const seen = new Set(); for (const c of cats) { if (typeof api[c] !== 'function') continue; try { const i = await api[c](); const u = i?.results?.newsURL, t = i?.results?.title; if (u && !seen.has(u) && t) { seen.add(u); news.push({ source: '🇱🇰 Hiru', category: c.replace('News', ''), title: t, description: (i.results.news || '').replace(/\s+/g, ' ').trim(), url: u, image: i.results.thumb || '', date: i.results.date || '' }); } } catch (e) {} } return news; }
 
-  for (const category of categories) {
-    if (typeof api[category] !== 'function') continue;
-    try {
-      const newsItem = await api[category]();
-      const url = newsItem?.results?.newsURL;
-      const title = newsItem?.results?.title;
-      if (url && seenUrls.has(url)) continue;
-      if (url && title) {
-        seenUrls.add(url);
-        news.push({
-          source: '🇱🇰 Hiru',
-          category: category.replace('News', ''),
-          title: title,
-          description: (newsItem.results.news || '').replace(/\s+/g, ' ').trim(),
-          url: url,
-          image: newsItem.results.thumb || '',
-          date: newsItem.results.date || ''
-        });
-      }
-    } catch (err) {}
-  }
-  return news;
-}
+async function fetchDeranaNews() { const news = []; try { const r = await Derana.scrapeHotNews(); if (Array.isArray(r)) { for (const a of r.slice(0, 3)) { const u = a.url || '', t = a.title || ''; if (u && t) { let d = await scrapeArticle(u); if (!d || d.length < 50) { const f = [a.content, a.description, a.summary, a.text, a.body].filter(Boolean); d = f.length ? f.reduce((x, y) => (x?.length || 0) > (y?.length || 0) ? x : y) : t; } d = String(d).replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim(); news.push({ source: '🔴 Derana', category: 'Hot', title: t, description: d, url: u, image: FALLBACK_IMAGE, date: a.time || '' }); await new Promise(r => setTimeout(r, 500)); } } } } catch (e) {} return news; }
 
-// ==================== DERANA NEWS (FIXED) ====================
-async function fetchDeranaNews() {
-  const news = [];
+async function fetchEsanaNews() { const news = []; try { const res = await axios.get(ESANA_API_URL, { timeout: 15000 }); const articles = res.data?.news_data?.data || []; for (const a of articles.slice(0, 3)) { const t = a.titleSi || a.titleEn || '', u = a.share_url || ''; let d = ''; if (a.contentSi && Array.isArray(a.contentSi)) { d = a.contentSi.map(i => (typeof i === 'string' ? i : (i.text || '')).replace(/<[^>]*>/g, '').trim()).filter(x => x.length > 5).join('\n\n'); } if (!d || d.length < 50) { for (const f of [a.descriptionSi, a.description, a.summary]) { if (typeof f === 'string' && f.length > d.length) d = f; } } if ((!d || d.length < 100) && u) { const sd = await scrapeArticle(u); if (sd.length > d.length) d = sd; } if (!d || d.length < 20 || d === t) continue; d = String(d).replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim(); news.push({ source: '🟢 Esana', category: 'Latest', title: t, description: d, url: u, image: a.cover || a.thumb || FALLBACK_IMAGE, date: a.published || '' }); await new Promise(r => setTimeout(r, 500)); } } catch (e) {} return news; }
+
+async function fetchAdaDeranaRSS() { const news = []; try { const r = await axios.get('https://www.adaderana.lk/rss.php', { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } }); const reg = /<item>([\s\S]*?)<\/item>/gi; let m; while ((m = reg.exec(r.data)) !== null && news.length < 2) { const i = m[1], t = (i.match(/<title>([^<]+)<\/title>/i) || [])[1]?.trim() || '', u = (i.match(/<link>([^<]+)<\/link>/i) || [])[1]?.trim() || '', dt = (i.match(/<pubDate>([^<]+)<\/pubDate>/i) || [])[1]?.trim() || ''; let d = await scrapeArticle(u); if (!d || d.length < 50) d = (i.match(/<description>([\s\S]*?)<\/description>/i) || [])[1]?.replace(/<[^>]*>/g, '').trim() || ''; d = d.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim(); if (t && u && d && d.length > 50) news.push({ source: '📰 AdaDerana', category: 'Latest', title: t, description: d, url: u, image: FALLBACK_IMAGE, date: dt }); await new Promise(r => setTimeout(r, 500)); } } catch (e) {} return news; }
+
+async function fetchSinhalaCricketNews() { const news = []; try { const api = new Hiru(); if (typeof api.SportNews === 'function') { const i = await api.SportNews(); const u = i?.results?.newsURL, t = i?.results?.title || '', d = (i?.results?.news || '').replace(/\s+/g, ' ').trim(); if (u && t && d) news.push({ source: '🏏🇱🇰 Cricket', category: 'Sinhala', title: t, description: d, url: u, image: FALLBACK_IMAGE, date: i.results.date || '' }); } } catch (e) {} return news; }
+
+async function fetchEnglishCricketNews() { const news = []; try { const r = await axios.get('https://www.espncricinfo.com/rss/content/story/feeds/8.xml', { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } }); const reg = /<item>([\s\S]*?)<\/item>/gi; let m; while ((m = reg.exec(r.data)) !== null && news.length < 2) { const i = m[1], t = (i.match(/<title>([^<]+)<\/title>/i) || [])[1]?.trim() || '', u = (i.match(/<link>([^<]+)<\/link>/i) || [])[1]?.trim() || '', dt = (i.match(/<pubDate>([^<]+)<\/pubDate>/i) || [])[1]?.trim() || ''; let d = (i.match(/<description>([\s\S]*?)<\/description>/i) || [])[1]?.replace(/<[^>]*>/g, '').trim() || ''; const sd = await scrapeArticle(u); if (sd.length > 100) d = sd; d = d.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim(); if (t && u && d) { news.push({ source: '🏏🌍 Cricket', category: 'Top News', title: t, description: d, url: u, image: FALLBACK_IMAGE, date: dt }); await new Promise(r => setTimeout(r, 500)); } } } catch (e) {} return news; }
+
+async function fetchAllLatestNews() { const results = await Promise.allSettled([fetchHiruNews(), fetchDeranaNews(), fetchEsanaNews(), fetchAdaDeranaRSS(), fetchSinhalaCricketNews(), fetchEnglishCricketNews()]); const all = []; for (const r of results) { if (r.status === 'fulfilled') all.push(...r.value); } const uniq = []; const seen = new Set(); for (const n of all) { if (n.url && !seen.has(n.url)) { seen.add(n.url); uniq.push(n); } } return uniq; }
+
+// ==================== SEND NEWS WITH BOT LOGO ALWAYS ====================
+async function sendNewsToGroup(n) {
+  if (!isConnected || !sock?.user) return false;
+  const d = (n.description || '').replace(/\s+/g, ' ').trim();
+  const msg = `💝 News Bot 💝\n\n${n.source} | ${n.category}\n\n━━━━━━━━━━━━━━━━━━━━━━\n\n${n.title}\n\n━━━━━━━━━━━━━━━━━━━━━━\n\n📌 ${d}\n\n━━━━━━━━━━━━━━━━━━━━━━\n\n${n.date ? `📅 ${n.date}\n\n` : ''}🔗 ${n.url}\n\n━━━━━━━━━━━━━━━━━━━━━━\n\nＢʏ Ｃʜᴀʀᴜᴋᴀ Ｍᴀʜᴇꜱʜ\n💛 Umesha & Mithila`;
   try {
-    if (typeof Derana.scrapeHotNews === 'function') {
-      const result = await Derana.scrapeHotNews();
-      if (Array.isArray(result) && result.length > 0) {
-        result.slice(0, 5).forEach(article => {
-          const articleUrl = article.url || '';
-          const articleTitle = article.title || '';
-          if (articleUrl && articleTitle) {
-            // Get the longest description from all fields
-            let description = '';
-            const descFields = ['content', 'description', 'summary', 'text', 'body', 'fullText'];
-            for (const field of descFields) {
-              if (article[field] && article[field].length > description.length) {
-                description = article[field];
-              }
-            }
-            if (!description) description = articleTitle;
-            
-            // Clean description - preserve full text
-            description = description
-              .replace(/<[^>]*>/g, '')
-              .replace(/&amp;/g, '&')
-              .replace(/&lt;/g, '<')
-              .replace(/&gt;/g, '>')
-              .replace(/&quot;/g, '"')
-              .replace(/\s+/g, ' ')
-              .trim();
-            
-            console.log(`🔴 Derana: ${articleTitle.substring(0, 50)}... [${description.length} chars]`);
-            
-            news.push({
-              source: '🔴 Derana',
-              category: 'Hot News',
-              title: articleTitle,
-              description: description,
-              url: articleUrl,
-              image: DERANA_FALLBACK_IMAGE, // Always use GitHub image
-              date: article.time || ''
-            });
-          }
-        });
-      }
-    }
-  } catch (err) {}
-  return news;
-}
-
-// ==================== SINHALA CRICKET NEWS ====================
-async function fetchSinhalaCricketNews() {
-  const news = [];
-  try {
-    const api = new Hiru();
-    const sportsCategories = ['SportNews', 'SportsNews'];
-    
-    for (const category of sportsCategories) {
-      if (typeof api[category] !== 'function') continue;
-      try {
-        const newsItem = await api[category]();
-        const url = newsItem?.results?.newsURL;
-        const title = newsItem?.results?.title || '';
-        const description = (newsItem?.results?.news || '').replace(/\s+/g, ' ').trim();
-        
-        const cricketKeywords = [
-          'ක්‍රිකට්', 'cricket', 'Cricket', 'ටෙස්ට්', 'එක්දින', 
-          'විස්සයි20', 'T20', 'ODI', 'පන්දු', 'දැවී', 'ලකුණු',
-          'ඉනිම', 'පිතිකරු', 'පන්දු යවන්නා', 'කඩුල්ල'
-        ];
-        
-        const isCricket = cricketKeywords.some(keyword => 
-          title.includes(keyword) || description.includes(keyword)
-        );
-        
-        if (url && title && isCricket && description) {
-          news.push({
-            source: '🏏🇱🇰 Cricket',
-            category: 'Sinhala Cricket',
-            title: title,
-            description: description,
-            url: url,
-            image: CRICKET_FALLBACK_IMAGE,
-            date: newsItem.results.date || ''
-          });
-        }
-      } catch (err) {}
-    }
-  } catch (err) {}
-  return news;
-}
-
-// ==================== ENGLISH CRICKET NEWS ====================
-async function fetchEnglishCricketNews() {
-  const news = [];
-  try {
-    const response = await axios.get('https://www.espncricinfo.com/rss/content/story/feeds/8.xml', {
-      timeout: 15000,
-      headers: { 'User-Agent': 'Mozilla/5.0' }
-    });
-    
-    const xml = response.data;
-    const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
-    let match;
-    const articles = [];
-    
-    while ((match = itemRegex.exec(xml)) !== null && articles.length < 3) {
-      const item = match[1];
-      articles.push({
-        title: (item.match(/<title>([^<]+)<\/title>/i) || [])[1]?.trim() || '',
-        url: (item.match(/<link>([^<]+)<\/link>/i) || [])[1]?.trim() || '',
-        summary: (item.match(/<description>([\s\S]*?)<\/description>/i) || [])[1]?.replace(/<[^>]*>/g, '').trim() || '',
-        date: (item.match(/<pubDate>([^<]+)<\/pubDate>/i) || [])[1]?.trim() || ''
-      });
-    }
-    
-    for (const article of articles) {
-      try {
-        const artRes = await axios.get(article.url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
-        const paragraphs = artRes.data.match(/<p[^>]*>([\s\S]*?)<\/p>/gi);
-        let description = article.summary;
-        if (paragraphs) {
-          const full = paragraphs.map(p => p.replace(/<[^>]*>/g, '').trim()).filter(p => p.length > 30).join('\n\n');
-          if (full.length > 100) description = full;
-        }
-        description = description.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
-        
-        news.push({
-          source: '🏏🌍 Cricket',
-          category: 'English Cricket',
-          title: article.title,
-          description: description,
-          url: article.url,
-          image: CRICKET_FALLBACK_IMAGE,
-          date: article.date
-        });
-        await new Promise(r => setTimeout(r, 500));
-      } catch (err) {}
-    }
-  } catch (err) {}
-  return news;
-}
-
-// ==================== COMBINED FETCH ====================
-async function fetchAllLatestNews() {
-  const [hiruNews, deranaNews, sinhalaCricket, englishCricket] = await Promise.all([
-    fetchHiruNews(), fetchDeranaNews(), fetchSinhalaCricketNews(), fetchEnglishCricketNews()
-  ]);
-
-  const allNews = [...hiruNews, ...deranaNews, ...sinhalaCricket, ...englishCricket];
-  const uniqueNews = [];
-  const seenUrls = new Set();
-
-  for (const news of allNews) {
-    if (news.url && !seenUrls.has(news.url)) {
-      seenUrls.add(news.url);
-      uniqueNews.push(news);
-    }
-  }
-  return uniqueNews;
-}
-
-async function sendConnectionNotice() {
-  if (!isConnected || !sock || !sock.user) return;
-
-  const message = 
-    `╭═══════════════════╮\n` +
-    `       📰 *News Bot* 📰\n` +
-    `     By Charuka Mahesh\n` +
-    `╰═══════════════════╯\n\n` +
-    `✅ Bot Connected!\n\n` +
-    `📡 *Sources:*\n` +
-    `🇱🇰 Hiru | 🔴 Derana\n` +
-    `🏏 Sinhala & English Cricket\n\n` +
-    `🔄 Auto-check every 2 mins\n\n` +
-    `📋 Type */menu* for commands\n\n` +
-    `🙏 Umesha | Mithila`;
-
-  try { await sock.sendMessage(GROUP_JID, { text: message }); } catch (err) {}
-}
-
-// ==================== SEND NEWS WITH IMAGES ====================
-async function sendNewsToGroup(newsItem) {
-  if (!isConnected || !sock || !sock.user) return false;
-
-  const title = newsItem.title || 'News';
-  const description = (newsItem.description || '').replace(/\s+/g, ' ').trim();
-  const url = newsItem.url || '';
-  const date = newsItem.date || '';
-  const source = newsItem.source || '';
-  const category = newsItem.category || '';
-  const image = newsItem.image || '';
-
-  const message = 
-    `╭───────────────────╮\n` +
-    `    📰 *News Bot* 📰\n` +
-    `  By Charuka Mahesh\n` +
-    `╰───────────────────╯\n\n` +
-    `${source} | 📂 ${category}\n\n` +
-    `*${title}*\n\n` +
-    `📌 ${description}\n\n` +
-    `${date ? `📅 ${date}\n\n` : ''}` +
-    `🔗 ${url}\n\n` +
-    `_\`🙏 Umesha | Mithila\`_`;
-
-  try {
-    // Try sending with image
-    if (image) {
-      try {
-        const sentMsg = await sock.sendMessage(GROUP_JID, {
-          image: { url: image },
-          caption: message,
-          mimetype: 'image/jpeg'
-        });
-        // Auto-react to own message
-        await autoReact(sentMsg.key);
-        console.log(`📤 [IMG] ${source}: ${title.substring(0, 40)}... [${description.length} chars]`);
-        return true;
-      } catch (imgErr) {
-        console.log(`⚠️ Image failed, using text...`);
-      }
-    }
-    
-    // Text fallback
-    const sentMsg = await sock.sendMessage(GROUP_JID, { text: message });
-    await autoReact(sentMsg.key);
-    console.log(`📤 [TXT] ${source}: ${title.substring(0, 40)}... [${description.length} chars]`);
-    return true;
-  } catch (err) {
-    return false;
-  }
+    if (n.image && n.image.length > 10 && !n.image.includes('dearan.jpeg')) { try { const s = await sock.sendMessage(GROUP_JID, { image: { url: n.image }, caption: msg, mimetype: 'image/jpeg' }); await autoReact(s.key); return true; } catch (e) {} }
+    try { const s = await sock.sendMessage(GROUP_JID, { image: { url: BOT_LOGO }, caption: msg, mimetype: 'image/png' }); await autoReact(s.key); return true; } catch (e) {}
+    const s = await sock.sendMessage(GROUP_JID, { text: msg }); await autoReact(s.key); return true;
+  } catch (e) { return false; }
 }
 
 async function checkAndShareAllNewNews() {
-  if (!isConnected || !sock || !sock.user) return;
-
-  try {
-    const allNews = await fetchAllLatestNews();
-    if (allNews.length === 0) return;
-
-    const state = loadState();
-    let newArticlesSent = 0;
-
-    for (const newsItem of allNews) {
-      if (!newsItem.url) continue;
-      if (state.sentUrls.includes(newsItem.url)) continue;
-
-      const sent = await sendNewsToGroup(newsItem);
-      if (sent) {
-        state.sentUrls.push(newsItem.url);
-        newArticlesSent++;
-        saveState(state);
-      }
-      await new Promise(resolve => setTimeout(resolve, 4000));
-    }
-
-    console.log(newArticlesSent > 0 ? `✅ Sent ${newArticlesSent} new articles` : 'No new articles.');
-  } catch (err) {
-    console.error('Check failed:', err.message);
-  }
+  if (!isConnected || !sock?.user) return;
+  try { const all = await fetchAllLatestNews(); if (!all.length) return; const state = loadState(); if (state.sentUrls.length === 0) { for (const item of all) { if (item.url) state.sentUrls.push(item.url); } saveState(state); console.log(`🆕 Marked ${state.sentUrls.length} as sent`); return; } let sent = 0; for (const item of all) { if (!item.url || state.sentUrls.includes(item.url)) continue; if (await sendNewsToGroup(item)) { state.sentUrls.push(item.url); sent++; saveState(state); } await new Promise(r => setTimeout(r, 3000)); } console.log(sent > 0 ? `✅ Sent ${sent}` : '📭 No new'); } catch (e) { console.error('Error:', e.message); }
 }
 
-(async () => {
-  console.log('📰 News Bot by Charuka Mahesh');
-  console.log('🙏 Thanks: Umesha Sathyanjali | Mithila Sharadha');
-  
-  const dir = path.dirname(STATE_FILE);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  
-  await ensureSingleInstance();
-  await startWhatsAppBot();
-
-  setInterval(() => checkAndShareAllNewNews(), CHECK_INTERVAL_MS);
-})();
+(async () => { console.log('📰 NewsBot LK - 6 Sources'); await startWhatsAppBot(); setInterval(() => checkAndShareAllNewNews(), CHECK_INTERVAL_MS); })();
