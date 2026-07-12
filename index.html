@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NewsBot · Next‑Gen WhatsApp News</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0b0b12;
+      --bg-secondary: #12121e;
+      --bg-card: #18182a;
+      --text: #f0f0f8;
+      --text-secondary: #b8b8d0;
+      --text-muted: #6a6a8a;
+      --border: #282840;
+      --shadow: rgba(0,0,0,0.7);
+      --card-hover: #22223a;
+      --accent: #f23b6a;
+      --accent-glow: rgba(242,59,106,0.25);
+      --accent-hover: #d62e5a;
+      --nav-bg: rgba(11,11,18,0.92);
+      --transition: 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    }
+
+    [data-theme="light"] {
+      --bg: #f6f6fa;
+      --bg-secondary: #ececf2;
+      --bg-card: #ffffff;
+      --text: #12121e;
+      --text-secondary: #3a3a4e;
+      --text-muted: #6a6a8a;
+      --border: #d8d8e4;
+      --shadow: rgba(0,0,0,0.06);
+      --card-hover: #f0f0f8;
+      --nav-bg: rgba(246,246,250,0.92);
+      --accent-glow: rgba(242,59,106,0.12);
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      transition: background 0.3s, color 0.3s;
+      min-height: 100vh;
+    }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 40px; }
+
+    /* ----- HEADER / NAV (glass) ----- */
+    .header {
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border);
+      background: var(--nav-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      transition: background 0.3s, border-color 0.3s;
+    }
+
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px 20px;
+    }
+
+    .logo {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .logo span { color: var(--accent); }
+
+    .nav-menu {
+      display: flex;
+      gap: 32px;
+      list-style: none;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .nav-menu a {
+      text-decoration: none;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      transition: color 0.3s;
+      white-space: nowrap;
+    }
+    .nav-menu a:hover { color: var(--accent); }
+
+    .nav-cta {
+      background: var(--accent);
+      color: #fff !important;
+      padding: 10px 28px;
+      border-radius: 40px;
+      font-weight: 700;
+      transition: background 0.3s, transform 0.2s, box-shadow 0.3s;
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+    .nav-cta:hover {
+      background: var(--accent-hover);
+      color: #fff !important;
+      transform: scale(1.04);
+      box-shadow: 0 0 32px var(--accent-glow);
+    }
+
+    .theme-toggle {
+      background: var(--border);
+      border: none;
+      border-radius: 40px;
+      padding: 6px 16px;
+      font-size: 15px;
+      cursor: pointer;
+      color: var(--text);
+      transition: 0.3s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      line-height: 1;
+    }
+    .theme-toggle:hover {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    /* ----- HERO (bold, with glow) ----- */
+    .hero-wrapper {
+      min-height: calc(100vh - 80px);
+      display: flex;
+      align-items: center;
+      padding: 40px 0;
+      position: relative;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 60px;
+      align-items: center;
+      width: 100%;
+    }
+
+    .hero-left h1 {
+      font-size: 56px;
+      font-weight: 900;
+      line-height: 1.08;
+      margin-bottom: 20px;
+      color: var(--text);
+    }
+    .hero-left h1 .highlight {
+      background: linear-gradient(135deg, var(--accent), #ff7eb3);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-left p {
+      color: var(--text-secondary);
+      font-size: 18px;
+      line-height: 1.8;
+      margin-bottom: 36px;
+      max-width: 90%;
+    }
+
+    .hero-buttons {
+      display: flex;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 16px 38px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.3s;
+      text-decoration: none;
+      display: inline-block;
+      border-radius: 60px;
+      box-shadow: 0 0 28px var(--accent-glow);
+    }
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      transform: translateY(-3px) scale(1.02);
+      box-shadow: 0 12px 40px var(--accent-glow);
+    }
+
+    .btn-outline {
+      background: transparent;
+      color: var(--text);
+      border: 1.5px solid var(--border);
+      padding: 16px 38px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.3s;
+      text-decoration: none;
+      display: inline-block;
+      border-radius: 60px;
+    }
+    .btn-outline:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+
+    .hero-right {
+      background: var(--bg-secondary);
+      height: 380px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 32px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      box-shadow: 0 20px 60px var(--shadow);
+    }
+    .hero-right img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    /* ----- STATUS BADGE (new) ----- */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(242,59,106,0.08);
+      border: 1px solid rgba(242,59,106,0.2);
+      padding: 6px 20px 6px 16px;
+      border-radius: 60px;
+      margin-bottom: 24px;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #2ecc71;
+      display: inline-block;
+      box-shadow: 0 0 12px #2ecc71;
+      animation: pulse-dot 2s infinite;
+    }
+    @keyframes pulse-dot {
+      0% { opacity: 0.6; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.2); }
+      100% { opacity: 0.6; transform: scale(0.9); }
+    }
+
+    /* ----- STATS BAR (glass) ----- */
+    .stats-bar {
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 48px 0;
+      margin: 10px 0;
+      background: var(--bg-secondary);
+      backdrop-filter: blur(8px);
+    }
+    .stats-grid {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .stat-item { text-align: center; }
+    .stat-number {
+      font-size: 44px;
+      font-weight: 800;
+      color: var(--text);
+      margin-bottom: 4px;
+      letter-spacing: -0.5px;
+    }
+    .stat-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    /* ----- SECTION TITLES (with accent) ----- */
+    .section-title {
+      font-size: 36px;
+      font-weight: 800;
+      text-align: center;
+      margin-bottom: 8px;
+      color: var(--text);
+      letter-spacing: -0.5px;
+    }
+    .section-title span { color: var(--accent); }
+    .section-desc {
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 16px;
+      margin-bottom: 52px;
+    }
+
+    /* ----- FEATURES (grid with icons) ----- */
+    .features-section {
+      padding: 90px 0;
+      background: var(--bg-secondary);
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 30px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .feature-item {
+      background: var(--bg-card);
+      padding: 36px 24px 30px;
+      border-radius: 24px;
+      text-align: center;
+      border: 1px solid var(--border);
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 20px var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+    .feature-item::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 3px;
+      background: linear-gradient(90deg, var(--accent), #ff7eb3);
+      opacity: 0;
+      transition: 0.3s;
+    }
+    .feature-item:hover::after { opacity: 1; }
+    .feature-item:hover {
+      transform: translateY(-8px);
+      border-color: var(--accent);
+      box-shadow: 0 16px 48px var(--shadow);
+      background: var(--card-hover);
+    }
+
+    .feature-item i {
+      font-size: 40px;
+      color: var(--accent);
+      margin-bottom: 16px;
+      background: rgba(242,59,106,0.08);
+      padding: 18px;
+      border-radius: 18px;
+      transition: 0.3s;
+    }
+    .feature-item:hover i {
+      background: rgba(242,59,106,0.18);
+      transform: scale(1.08);
+    }
+    .feature-item h4 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+    .feature-item p {
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    /* ----- COMMANDS (modern cards) ----- */
+    .commands-section {
+      padding: 90px 0;
+    }
+
+    .commands-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 24px;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+
+    .command-card {
+      background: var(--bg-card);
+      padding: 24px 22px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      transition: 0.3s;
+      box-shadow: 0 4px 16px var(--shadow);
+    }
+    .command-card:hover {
+      border-color: var(--accent);
+      transform: translateX(8px) scale(1.01);
+      background: var(--card-hover);
+      box-shadow: 0 8px 32px var(--shadow);
+    }
+
+    .command-icon {
+      font-size: 22px;
+      color: var(--accent);
+      width: 50px;
+      height: 50px;
+      background: rgba(242,59,106,0.08);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: 0.3s;
+    }
+    .command-card:hover .command-icon {
+      background: rgba(242,59,106,0.18);
+      transform: rotate(-4deg) scale(1.05);
+    }
+
+    .cmd-wrapper .cmd {
+      font-weight: 700;
+      font-size: 16px;
+      color: var(--text);
+      letter-spacing: -0.2px;
+    }
+    .cmd-wrapper .desc {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    /* ----- CTA (with glow) ----- */
+    .cta-section {
+      padding: 80px 0;
+      background: var(--bg-secondary);
+      text-align: center;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .cta-section h2 {
+      font-size: 36px;
+      font-weight: 800;
+      margin-bottom: 12px;
+      color: var(--text);
+    }
+    .cta-section p {
+      color: var(--text-secondary);
+      margin-bottom: 32px;
+      font-size: 18px;
+    }
+    .btn-cta {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 16px 48px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+      border-radius: 60px;
+      box-shadow: 0 0 30px var(--accent-glow);
+      transition: 0.3s;
+    }
+    .btn-cta:hover {
+      background: var(--accent-hover);
+      transform: translateY(-3px) scale(1.02);
+      box-shadow: 0 12px 48px var(--accent-glow);
+    }
+
+    /* ----- FOOTER (refined) ----- */
+    .footer {
+      padding: 60px 0 30px;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+    }
+    .footer-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 40px;
+      margin-bottom: 40px;
+    }
+    .footer-col h4 {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      margin-bottom: 18px;
+      color: var(--text);
+      font-weight: 700;
+    }
+    .footer-col ul {
+      list-style: none;
+    }
+    .footer-col ul li {
+      margin-bottom: 12px;
+    }
+    .footer-col ul li a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 14px;
+      transition: color 0.3s;
+    }
+    .footer-col ul li a:hover {
+      color: var(--accent);
+    }
+
+    .footer-bottom {
+      text-align: center;
+      padding-top: 28px;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-muted);
+      letter-spacing: 1px;
+    }
+
+    /* ----- ANIMATIONS ----- */
+    @keyframes fadeUp {
+      0% { opacity: 0; transform: translateY(30px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+    .feature-item { animation: fadeUp 0.6s ease both; }
+    .feature-item:nth-child(1) { animation-delay: 0.04s; }
+    .feature-item:nth-child(2) { animation-delay: 0.08s; }
+    .feature-item:nth-child(3) { animation-delay: 0.12s; }
+    .feature-item:nth-child(4) { animation-delay: 0.16s; }
+
+    .command-card { animation: fadeUp 0.5s ease both; }
+    .command-card:nth-child(1) { animation-delay: 0.03s; }
+    .command-card:nth-child(2) { animation-delay: 0.06s; }
+    .command-card:nth-child(3) { animation-delay: 0.09s; }
+    .command-card:nth-child(4) { animation-delay: 0.12s; }
+    .command-card:nth-child(5) { animation-delay: 0.15s; }
+    .command-card:nth-child(6) { animation-delay: 0.18s; }
+
+    /* ----- RESPONSIVE ----- */
+    @media (max-width: 968px) {
+      .container { padding: 0 24px; }
+      .hero { grid-template-columns: 1fr; gap: 40px; }
+      .hero-left p { max-width: 100%; }
+      .footer-grid { grid-template-columns: repeat(2, 1fr); }
+      .hero-wrapper { min-height: auto; padding: 60px 0; }
+      .hero-left h1 { font-size: 40px; }
+    }
+
+    @media (max-width: 768px) {
+      .nav { flex-direction: column; align-items: center; gap: 12px; }
+      .nav-menu { gap: 16px; justify-content: center; }
+      .hero-left h1 { font-size: 34px; }
+      .stats-grid { flex-direction: column; gap: 28px; }
+      .stat-number { font-size: 38px; }
+      .footer-grid { grid-template-columns: 1fr; text-align: center; }
+      .hero-buttons { justify-content: center; }
+      .hero-left { text-align: center; }
+      .hero-left p { margin-left: auto; margin-right: auto; }
+      .commands-grid { grid-template-columns: 1fr; }
+      .features-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 480px) {
+      .nav-menu { gap: 10px; }
+      .nav-menu a { font-size: 10px; }
+      .hero-left h1 { font-size: 28px; }
+      .features-grid { grid-template-columns: 1fr; }
+      .command-card { flex-wrap: wrap; justify-content: center; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header class="header">
+    <div class="container">
+      <div class="nav">
+        <div class="logo">News<span>Bot</span></div>
+        <ul class="nav-menu">
+          <li><a href="#home">Home</a></li>
+          <li><a href="#features">Features</a></li>
+          <li><a href="#commands">Commands</a></li>
+          <li><a href="#contact" class="nav-cta"><i class="fab fa-whatsapp"></i> Connect</a></li>
+          <li>
+            <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+              <i class="fas fa-moon" id="themeIcon"></i>
+            </button>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </header>
+
+  <!-- HERO -->
+  <section class="hero-wrapper" id="home">
+    <div class="container">
+      <div class="hero">
+        <div class="hero-left">
+          <div class="status-badge">
+            <span class="status-dot"></span> <span>Always On · 24/7</span>
+          </div>
+          <h1>Next‑Gen <br><span class="highlight">WhatsApp News</span> Bot</h1>
+          <p>Real‑time news from 10+ trusted Sri Lankan sources. Delivered with rich media, instant alerts, and zero spam.</p>
+          <div class="hero-buttons">
+            <a href="#commands" class="btn-primary"><i class="fas fa-terminal"></i> Explore Commands</a>
+            <a href="https://github.com/charukamahesh922-collab/NewsBot-LK" class="btn-outline"><i class="fab fa-github"></i> GitHub</a>
+          </div>
+        </div>
+        <div class="hero-right">
+          <img src="https://raw.githubusercontent.com/charukamahesh922-collab/NewsBot-LK/refs/heads/main/Assetes/botnews.png" alt="NewsBot LK preview">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- STATS -->
+  <div class="stats-bar">
+    <div class="container">
+      <div class="stats-grid">
+        <div class="stat-item"><div class="stat-number">10+</div><div class="stat-label">News Sources</div></div>
+        <div class="stat-item"><div class="stat-number">45s</div><div class="stat-label">Avg. Delivery</div></div>
+        <div class="stat-item"><div class="stat-number">8</div><div class="stat-label">Core Commands</div></div>
+        <div class="stat-item"><div class="stat-number">99.9%</div><div class="stat-label">Uptime</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FEATURES -->
+  <section class="features-section" id="features">
+    <div class="container">
+      <h2 class="section-title">Built for <span>Speed &amp; Reliability</span></h2>
+      <div class="section-desc">Every feature is crafted to keep you informed without the noise.</div>
+      <div class="features-grid">
+        <div class="feature-item">
+          <i class="fas fa-newspaper"></i>
+          <h4>10+ Local Sources</h4>
+          <p>Ada Derana, NewsFirst, Daily Mirror, Lankadeepa, and more.</p>
+        </div>
+        <div class="feature-item">
+          <i class="fas fa-image"></i>
+          <h4>Rich Media</h4>
+          <p>Full descriptions, high-res images, and direct links.</p>
+        </div>
+        <div class="feature-item">
+          <i class="fas fa-bolt"></i>
+          <h4>Sub‑60s Alerts</h4>
+          <p>Push notifications within seconds of publication.</p>
+        </div>
+        <div class="feature-item">
+          <i class="fas fa-cloud-upload-alt"></i>
+          <h4>Always On</h4>
+          <p>Enterprise‑grade cloud hosting with 99.9% uptime.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- COMMANDS -->
+  <section class="commands-section" id="commands">
+    <div class="container">
+      <h2 class="section-title">Command <span>Control</span></h2>
+      <div class="section-desc">Simple, intuitive commands to get the news you want.</div>
+      <div class="commands-grid">
+        <div class="command-card">
+          <div class="command-icon"><i class="fas fa-list-ul"></i></div>
+          <div class="cmd-wrapper"><span class="cmd">.news</span><span class="desc">latest headlines from all sources</span></div>
+        </div>
+        <div class="command-card">
+          <div class="command-icon"><i class="fas fa-search"></i></div>
+          <div class="cmd-wrapper"><span class="cmd">.search [keyword]</span><span class="desc">find news by keyword</span></div>
+        </div>
+        <div class="command-card">
+          <div class="command-icon"><i class="fas fa-filter"></i></div>
+          <div class="cmd-wrapper"><span class="cmd">.category [sports|tech|local]</span><span class="desc">filter by category</span></div>
+        </div>
+        <div class="command-card">
+          <div class="command-icon"><i class="fas fa-bell"></i></div>
+          <div class="cmd-wrapper"><span class="cmd">.subscribe</span><span class="desc">hourly auto‑updates</span></div>
+        </div>
+        <div class="command-card">
+          <div class="command-icon"><i class="fas fa-stop-circle"></i></div>
+          <div class="cmd-wrapper"><span class="cmd">.unsubscribe</span><span class="desc">stop automated updates</span></div>
+        </div>
+        <div class="command-card">
+          <div class="command-icon"><i class="fas fa-info-circle"></i></div>
+          <div class="cmd-wrapper"><span class="cmd">.help</span><span class="desc">show all available commands</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta-section" id="contact">
+    <div class="container">
+      <h2>Ready to <span style="color:var(--accent);">Stay Informed</span>?</h2>
+      <p>Join hundreds of users who get their news first on WhatsApp.</p>
+      <a href="#" class="btn-cta"><i class="fab fa-whatsapp"></i> Connect Now</a>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-col">
+          <h4>NewsBot LK</h4>
+          <ul><li><a href="#">WhatsApp News Bot</a></li><li><a href="#">Sri Lanka</a></li></ul>
+        </div>
+        <div class="footer-col">
+          <h4>Source</h4>
+          <ul><li><a href="https://github.com/charukamahesh922-collab/NewsBot-LK">GitHub Repo</a></li><li><a href="#">Documentation</a></li></ul>
+        </div>
+        <div class="footer-col">
+          <h4>Commands</h4>
+          <ul><li><a href="#">.news</a></li><li><a href="#">.search</a></li><li><a href="#">.subscribe</a></li></ul>
+        </div>
+        <div class="footer-col">
+          <h4>Follow</h4>
+          <ul><li><a href="#"><i class="fab fa-github"></i> GitHub</a></li><li><a href="#"><i class="fab fa-twitter"></i> Twitter</a></li></ul>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p>© 2025–2026 · NewsBot LK · Charuka Mahesh · All Rights Reserved</p>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const toggle = document.getElementById('themeToggle');
+    const icon = document.getElementById('themeIcon');
+    const html = document.documentElement;
+
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    html.setAttribute('data-theme', savedTheme);
+    updateIcon(savedTheme);
+
+    toggle.addEventListener('click', () => {
+      const current = html.getAttribute('data-theme');
+      const next = current === 'light' ? 'dark' : 'light';
+      html.setAttribute('data-theme', next);
+      localStorage.setItem('theme', next);
+      updateIcon(next);
+    });
+
+    function updateIcon(theme) {
+      icon.className = theme === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
+    }
+
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+      anchor.addEventListener('click', function(e) {
+        const href = this.getAttribute('href');
+        if (href === '#') return;
+        e.preventDefault();
+        const target = document.querySelector(href);
+        if (!target) return;
+        const offset = 80;
+        const top = target.offsetTop - offset;
+        window.scrollTo({ top, behavior: 'smooth' });
+      });
+    });
+  </script>
+</body>
+</html>
