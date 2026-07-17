@@ -1,5 +1,5 @@
 // ============================================
-// 📰 NewsBot LK - Ultimate Bot
+// 📰 NewsBot LK - Ultimate Bot with GitHub Auto-Sync
 // 👨‍💻 By Charuka Mahesh
 // 💛 Umesha Sathyanjali | Mithila | Sharada
 // 🌐 https://charukamahesh922-collab.github.io/protifilo/
@@ -14,6 +14,7 @@ const Hiru = require('hirunews-scrap');
 const Derana = require('ada-derana-news-scraper');
 const DY_NEWS = require('@dark-yasiya/news-scrap');
 const dynews = new DY_NEWS();
+const simpleGit = require('simple-git');
 
 try { if (fs.existsSync(path.join(__dirname, 'app.pid'))) fs.unlinkSync(path.join(__dirname, 'app.pid')); } catch (e) {}
 
@@ -21,11 +22,17 @@ try { if (fs.existsSync(path.join(__dirname, 'app.pid'))) fs.unlinkSync(path.joi
 // CONFIGURATION
 // ============================================
 const GROUP_JID = process.env.GROUP_JID || '120363427636501059@g.us';
-const OWNER_JID = process.env.OWNER_JID || '94784745155@s.whatsapp.net';
+const OWNER_JID = process.env.OWNER_JID || '94762471350@s.whatsapp.net';
 const CHECK_INTERVAL_MS = Number(process.env.CHECK_INTERVAL_MS || 60000);
 const STATE_FILE = path.join(__dirname, 'last-news.json');
 const SAVE_FOLDER = path.join(__dirname, 'saved_media');
 const PORTFOLIO_URL = 'https://charukamahesh922-collab.github.io/protifilo/';
+
+// GitHub Configuration
+const GITHUB_REPO_PATH = __dirname;
+const GITHUB_BRANCH = process.env.GITHUB_BRANCH || 'main';
+const GITHUB_REMOTE = process.env.GITHUB_REMOTE || 'origin';
+const AUTO_SYNC_ENABLED = process.env.AUTO_SYNC_ENABLED !== 'false';
 
 if (!fs.existsSync(SAVE_FOLDER)) fs.mkdirSync(SAVE_FOLDER, { recursive: true });
 
@@ -65,8 +72,157 @@ let sock = null, reconnectTimer = null, reconnectAttempts = 0;
 let isConnected = false, isShuttingDown = false, lastStatusProcessTime = 0;
 const STATUS_COOLDOWN = 3000;
 
-function loadState() { try { if (fs.existsSync(STATE_FILE)) { const s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); if (!s.sentUrls) s.sentUrls = []; return s; } } catch (e) {} return { sentUrls: [] }; }
-function saveState(s) { try { if (s.sentUrls?.length > 15000) s.sentUrls = s.sentUrls.slice(-15000); fs.writeFileSync(STATE_FILE + '.tmp', JSON.stringify(s, null, 2)); fs.renameSync(STATE_FILE + '.tmp', STATE_FILE); } catch (e) {} }
+// ============================================
+// GITHUB AUTO-SYNC FUNCTIONS
+// ============================================
+
+/**
+ * Initialize git repository
+ */
+async function initGitRepo() {
+    try {
+        const git = simpleGit(GITHUB_REPO_PATH);
+        const isRepo = await git.checkIsRepo();
+        if (!isRepo) {
+            console.log('📁 Initializing git repository...');
+            await git.init();
+            const repoUrl = process.env.GITHUB_REPO_URL || 'https://github.com/charukamahesh922-collab/NewsBot-LK.git';
+            await git.addRemote(GITHUB_REMOTE, repoUrl);
+            console.log('✅ Git repository initialized');
+        }
+        return git;
+    } catch (error) {
+        console.error('❌ Git init error:', error.message);
+        return null;
+    }
+}
+
+/**
+ * Sync file to GitHub
+ */
+async function syncToGitHub(filePath, commitMessage = '🔄 Updated last-news.json') {
+    if (!AUTO_SYNC_ENABLED) {
+        console.log('⏭️ GitHub auto-sync is disabled');
+        return false;
+    }
+
+    try {
+        const git = await initGitRepo();
+        if (!git) return false;
+
+        // Check if file exists
+        if (!fs.existsSync(filePath)) {
+            console.log('⚠️ File not found:', filePath);
+            return false;
+        }
+
+        // Add file to git
+        await git.add(filePath);
+
+        // Check if there are changes
+        const status = await git.status();
+        if (status.files.length === 0) {
+            console.log('ℹ️ No changes to commit');
+            return true;
+        }
+
+        // Get current branch
+        const branch = await git.branch();
+        const currentBranch = branch.current || GITHUB_BRANCH;
+
+        // Configure git user if not set
+        try {
+            await git.addConfig('user.name', process.env.GIT_USER_NAME || 'NewsBot LK');
+            await git.addConfig('user.email', process.env.GIT_USER_EMAIL || 'newsbot@charukamahesh.com');
+        } catch (e) {}
+
+        // Commit changes
+        await git.commit(commitMessage);
+        console.log('✅ Committed changes locally');
+
+        // Push to remote
+        console.log('📤 Pushing to GitHub...');
+        await git.push(GITHUB_REMOTE, currentBranch);
+        console.log('✅ Successfully synced to GitHub!');
+        
+        return true;
+    } catch (error) {
+        console.error('❌ GitHub sync error:', error.message);
+        return false;
+    }
+}
+
+/**
+ * Sync state file to GitHub with retry
+ */
+async function syncStateToGitHub(state, retries = 3) {
+    if (!AUTO_SYNC_ENABLED) return false;
+
+    for (let i = 0; i < retries; i++) {
+        try {
+            // Write file
+            const tempFile = STATE_FILE + '.tmp';
+            fs.writeFileSync(tempFile, JSON.stringify(state, null, 2));
+            fs.renameSync(tempFile, STATE_FILE);
+            
+            // Sync to GitHub
+            const success = await syncToGitHub(STATE_FILE, `🔄 Updated news state - ${new Date().toISOString()}`);
+            if (success) return true;
+            
+            // Wait before retry
+            if (i < retries - 1) {
+                console.log(`⏳ Retrying sync... (${i + 1}/${retries})`);
+                await new Promise(r => setTimeout(r, 3000));
+            }
+        } catch (error) {
+            console.error(`❌ Sync attempt ${i + 1} failed:`, error.message);
+        }
+    }
+    return false;
+}
+
+// ============================================
+// STATE MANAGEMENT (Modified for GitHub sync)
+// ============================================
+
+function loadState() { 
+    try { 
+        if (fs.existsSync(STATE_FILE)) { 
+            const s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); 
+            if (!s.sentUrls) s.sentUrls = []; 
+            if (!s.lastSync) s.lastSync = null;
+            return s; 
+        } 
+    } catch (e) {} 
+    return { sentUrls: [], lastSync: null }; 
+}
+
+function saveState(s) { 
+    try { 
+        if (s.sentUrls?.length > 15000) s.sentUrls = s.sentUrls.slice(-15000);
+        s.lastSync = new Date().toISOString();
+        
+        // Save locally
+        const tempFile = STATE_FILE + '.tmp';
+        fs.writeFileSync(tempFile, JSON.stringify(s, null, 2));
+        fs.renameSync(tempFile, STATE_FILE);
+        console.log('💾 State saved locally');
+        
+        // Auto-sync to GitHub (background)
+        syncStateToGitHub(s).catch(err => {
+            console.error('❌ Background sync failed:', err.message);
+        });
+        
+        return true;
+    } catch (e) {
+        console.error('❌ Save state error:', e.message);
+        return false;
+    } 
+}
+
+// ============================================
+// BOT FUNCTIONS
+// ============================================
 
 async function autoReact(mid) { if (!sock || !mid) return; try { await sock.sendMessage(GROUP_JID, { react: { text: NEWS_REACTIONS[Math.floor(Math.random() * NEWS_REACTIONS.length)], key: mid } }); } catch (e) {} }
 
@@ -76,18 +232,14 @@ async function scrapeArticleWithImage(url) {
 
 async function sendConnectionNotice() {
   if (!isConnected || !sock?.user) return;
-  const msg = `💝 News Bot 💝\n\n✅ Connected\n📡 10 Sources | 20+ Commands\n🔄 Every 1 min\n\n📋 .menu for all commands\n\n🌐 ${PORTFOLIO_URL}\n\nＢʏ Ｃʜᴀʀᴜᴋᴀ Ｍᴀʜᴇꜱʜ\n💛 Umesha & Mithila`;
+  const msg = `💝 News Bot 💝\n\n✅ Connected\n📡 10 Sources | 20+ Commands\n🔄 Every ${CHECK_INTERVAL_MS/1000}s\n📌 GitHub Auto-Sync: ${AUTO_SYNC_ENABLED ? '✅ ON' : '❌ OFF'}\n\n📋 .menu for all commands\n\n🌐 ${PORTFOLIO_URL}\n\nＢʏ Ｃʜᴀʀᴜᴋᴀ Ｍᴀʜᴇꜱʜ\n💛 Umesha & Mithila`;
   try { await sock.sendMessage(OWNER_JID, { image: { url: BOT_LOGO }, caption: msg, mimetype: 'image/png' }); } catch (e) {}
 }
 
 async function sendBotMenu(jid) {
   if (!isConnected || !sock?.user) return;
   const msg = `💝 *News Bot LK* 💝\n\n📌 *COMMANDS*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n📰 *.news* - Fetch News\n📊 *.stats* - Statistics\n💾 *.save* - Save Media\n\n🎮 *FUN COMMANDS*\n.joke .quote .flip .roll\n.truth .dare .name\n\n🛠️ *UTILITY*\n.calc .wiki .google .yt\n.ping .system .rules\n.afk .tag .get .tags\n\n👥 *GROUP MANAGEMENT*\n.welcome .goodbye .promote .demote\n.mute @user .kick @user .add @user\n.everyone .poll .remind\n\n━━━━━━━━━━━━━━━━━━━━━━━\n🌐 ${PORTFOLIO_URL}\n\nＢʏ Ｃʜᴀʀᴜᴋᴀ Ｍᴀʜᴇꜱʜ\n💛 Umesha & Mithila`;
-  try { 
-    await sock.sendMessage(jid, { text: msg }); 
-  } catch (e) {
-    console.error('Menu error:', e.message);
-  }
+  try { await sock.sendMessage(jid, { text: msg }); } catch (e) { console.error('Menu error:', e.message); }
 }
 
 async function autoViewAndReact(statusMsg) {
@@ -118,11 +270,6 @@ async function startWhatsAppBot() {
   });
 
   // ============================================
-  // GROUP PARTICIPANTS HANDLER - DISABLED (No welcome/goodbye)
-  // ============================================
-  // Removed welcome and goodbye messages
-
-  // ============================================
   // MESSAGE HANDLER - WORKS IN ALL CHATS
   // ============================================
   sock.ev.on('messages.upsert', async (m) => {
@@ -133,23 +280,19 @@ async function startWhatsAppBot() {
       const jid = msg.key.remoteJid;
       const fromMe = msg.key.fromMe;
       
-      // Skip status broadcasts
       if (jid === 'status@broadcast') { 
         await autoViewAndReact(msg); 
         continue; 
       }
       
-      // Skip messages sent by the bot itself
       if (fromMe) continue;
 
-      // Extract text from message
       let rawText = '';
       if (msg.message.conversation) rawText = msg.message.conversation;
       else if (msg.message.extendedTextMessage?.text) rawText = msg.message.extendedTextMessage.text;
       else if (msg.message.imageMessage?.caption) rawText = msg.message.imageMessage.caption;
       else if (msg.message.videoMessage?.caption) rawText = msg.message.videoMessage.caption;
       
-      // Skip empty messages
       if (!rawText) continue;
 
       const lowerText = rawText.trim().toLowerCase();
@@ -157,9 +300,7 @@ async function startWhatsAppBot() {
 
       console.log(`📩 [${jid}] ${sender}: ${rawText}`);
 
-      // ============================================
-      // AFK CHECK - WORKS IN ALL CHATS
-      // ============================================
+      // AFK CHECK
       if (msg.message.extendedTextMessage?.contextInfo?.mentionedJid) {
         for (const mentioned of msg.message.extendedTextMessage.contextInfo.mentionedJid) {
           if (afkUsers.has(mentioned)) {
@@ -173,9 +314,7 @@ async function startWhatsAppBot() {
         }
       }
 
-      // ============================================
-      // AUTO REPLIES - WORKS IN ALL CHATS
-      // ============================================
+      // AUTO REPLIES
       for (const [word, reply] of Object.entries(autoReplies)) {
         if (lowerText === word) {
           await sock.sendMessage(jid, { text: reply });
@@ -183,11 +322,8 @@ async function startWhatsAppBot() {
         }
       }
 
-      // ============================================
-      // COMMANDS - ALL WORK IN ALL CHATS
-      // ============================================
+      // ============ COMMANDS ============
 
-      // .save command
       if (lowerText === '.save' || lowerText === '#save') {
         const ctx = msg.message.extendedTextMessage?.contextInfo;
         if (ctx?.quotedMessage && ctx?.stanzaId) {
@@ -203,13 +339,11 @@ async function startWhatsAppBot() {
         return;
       }
 
-      // ============ MENU ============
       if (lowerText === '.menu' || lowerText === '#menu' || lowerText === 'menu' || lowerText === 'help' || lowerText === '.help') { 
         await sendBotMenu(jid); 
         return; 
       }
       
-      // ============ NEWS ============
       if (lowerText === '.news' || lowerText === '#news' || lowerText === 'news') { 
         if (jid.endsWith('@g.us')) {
           await sock.sendMessage(jid, { text: '📰 Fetching latest news...' });
@@ -220,11 +354,10 @@ async function startWhatsAppBot() {
         return; 
       }
       
-      // ============ STATS ============
       if (lowerText === '.stats' || lowerText === '#stats' || lowerText === 'stats') { 
         const st = loadState(); 
         await sock.sendMessage(jid, { 
-          text: `💝 *News Bot Stats*\n\n📰 Sent: *${st.sentUrls?.length || 0}*\n🔄 Every: *${CHECK_INTERVAL_MS/1000}s*\n📡 Sources: *10*\n\n🌐 ${PORTFOLIO_URL}` 
+          text: `💝 *News Bot Stats*\n\n📰 Sent: *${st.sentUrls?.length || 0}*\n🔄 Every: *${CHECK_INTERVAL_MS/1000}s*\n📡 Sources: *10*\n📌 Last Sync: ${st.lastSync || 'Never'}\n\n🌐 ${PORTFOLIO_URL}` 
         }); 
         return; 
       }
@@ -314,7 +447,7 @@ async function startWhatsAppBot() {
       }
       
       if (lowerText === '.system' || lowerText === '.sys') { 
-        const info = `🖥️ *System*\n\n⏱️ Uptime: ${Math.floor(os.uptime()/3600)}h\n💾 Memory: ${Math.floor(os.freemem()/1024/1024)}MB\n🖥️ Platform: ${os.platform()}\n\n🌐 ${PORTFOLIO_URL}`; 
+        const info = `🖥️ *System*\n\n⏱️ Uptime: ${Math.floor(os.uptime()/3600)}h\n💾 Memory: ${Math.floor(os.freemem()/1024/1024)}MB\n🖥️ Platform: ${os.platform()}\n📌 GitHub Sync: ${AUTO_SYNC_ENABLED ? '✅ ON' : '❌ OFF'}\n\n🌐 ${PORTFOLIO_URL}`; 
         await sock.sendMessage(jid, { text: info }); 
         return; 
       }
@@ -359,10 +492,8 @@ async function startWhatsAppBot() {
         return; 
       }
 
-      // ============ GROUP COMMANDS (ONLY IN GROUPS) ============
+      // ============ GROUP COMMANDS ============
       if (jid.endsWith('@g.us')) {
-        
-        // .mute / .silence
         if (lowerText === '.mute' || lowerText === '.silence') { 
           isMuted = true; 
           await sock.sendMessage(jid, { text: '🔇 Bot muted for 30 mins.' }); 
@@ -370,21 +501,18 @@ async function startWhatsAppBot() {
           return; 
         }
         
-        // .unmute / .speak
         if (lowerText === '.unmute' || lowerText === '.speak') { 
           isMuted = false; 
           await sock.sendMessage(jid, { text: '🔊 Bot unmuted!' }); 
           return; 
         }
         
-        // .poll
         if (lowerText.startsWith('.poll ')) { 
           const q = rawText.replace('.poll', '').trim(); 
           await sock.sendMessage(jid, { poll: { name: q, values: ['Yes', 'No', 'Maybe'], selectableCount: 1 } }); 
           return; 
         }
         
-        // .everyone
         if (lowerText === '.everyone' || lowerText === '.all') { 
           try { 
             const meta = await sock.groupMetadata(jid); 
@@ -396,7 +524,6 @@ async function startWhatsAppBot() {
           return; 
         }
         
-        // .remind
         if (lowerText.startsWith('.remind ')) { 
           const parts = rawText.split(' '); 
           const time = parseInt(parts[1]); 
@@ -408,146 +535,95 @@ async function startWhatsAppBot() {
           return; 
         }
 
-        // ============ GROUP MANAGEMENT (ADMIN ONLY) ============
-        
-        // .welcome
+        // ============ GROUP MANAGEMENT ============
         if (lowerText === '.welcome') { 
-          await sock.sendMessage(jid, { 
-            text: `👋 *Welcome Message*\n\nWelcome new members with a personalized message!\n\nType .setwelcome <message> to customize.`
-          }); 
+          await sock.sendMessage(jid, { text: `👋 *Welcome Message*\n\nWelcome new members with a personalized message!\n\nType .setwelcome <message> to customize.` }); 
           return; 
         }
 
-        // .goodbye
         if (lowerText === '.goodbye') { 
-          await sock.sendMessage(jid, { 
-            text: `👋 *Goodbye Message*\n\nSay goodbye when members leave!\n\nType .setgoodbye <message> to customize.`
-          }); 
+          await sock.sendMessage(jid, { text: `👋 *Goodbye Message*\n\nSay goodbye when members leave!\n\nType .setgoodbye <message> to customize.` }); 
           return; 
         }
 
-        // .mute @user
         if (lowerText.startsWith('.mute @')) {
           try {
             const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
             if (mentioned && mentioned.length > 0) {
               const target = mentioned[0];
               await sock.groupParticipantsUpdate(jid, [target], 'demote');
-              await sock.sendMessage(jid, { 
-                text: `🔇 User @${target.split('@')[0]} has been muted!`,
-                mentions: [target]
-              });
+              await sock.sendMessage(jid, { text: `🔇 User @${target.split('@')[0]} has been muted!`, mentions: [target] });
             }
-          } catch (e) { 
-            await sock.sendMessage(jid, { text: '❌ Failed to mute user. Make sure I am admin!' }); 
-          }
+          } catch (e) { await sock.sendMessage(jid, { text: '❌ Failed to mute user. Make sure I am admin!' }); }
           return;
         }
 
-        // .kick @user
         if (lowerText.startsWith('.kick @')) {
           try {
             const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
             if (mentioned && mentioned.length > 0) {
               const target = mentioned[0];
               await sock.groupParticipantsUpdate(jid, [target], 'remove');
-              await sock.sendMessage(jid, { 
-                text: `👢 User @${target.split('@')[0]} has been removed!`,
-                mentions: [target]
-              });
+              await sock.sendMessage(jid, { text: `👢 User @${target.split('@')[0]} has been removed!`, mentions: [target] });
             }
-          } catch (e) { 
-            await sock.sendMessage(jid, { text: '❌ Failed to kick user. Make sure I am admin!' }); 
-          }
+          } catch (e) { await sock.sendMessage(jid, { text: '❌ Failed to kick user. Make sure I am admin!' }); }
           return;
         }
 
-        // .promote @user
         if (lowerText.startsWith('.promote @')) {
           try {
             const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
             if (mentioned && mentioned.length > 0) {
               const target = mentioned[0];
               await sock.groupParticipantsUpdate(jid, [target], 'promote');
-              await sock.sendMessage(jid, { 
-                text: `⭐ User @${target.split('@')[0]} has been promoted to admin!`,
-                mentions: [target]
-              });
+              await sock.sendMessage(jid, { text: `⭐ User @${target.split('@')[0]} has been promoted to admin!`, mentions: [target] });
             }
-          } catch (e) { 
-            await sock.sendMessage(jid, { text: '❌ Failed to promote user. Make sure I am admin!' }); 
-          }
+          } catch (e) { await sock.sendMessage(jid, { text: '❌ Failed to promote user. Make sure I am admin!' }); }
           return;
         }
 
-        // .demote @user
         if (lowerText.startsWith('.demote @')) {
           try {
             const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
             if (mentioned && mentioned.length > 0) {
               const target = mentioned[0];
               await sock.groupParticipantsUpdate(jid, [target], 'demote');
-              await sock.sendMessage(jid, { 
-                text: `⬇️ User @${target.split('@')[0]} has been demoted!`,
-                mentions: [target]
-              });
+              await sock.sendMessage(jid, { text: `⬇️ User @${target.split('@')[0]} has been demoted!`, mentions: [target] });
             }
-          } catch (e) { 
-            await sock.sendMessage(jid, { text: '❌ Failed to demote user. Make sure I am admin!' }); 
-          }
+          } catch (e) { await sock.sendMessage(jid, { text: '❌ Failed to demote user. Make sure I am admin!' }); }
           return;
         }
 
-        // .add 947xxxxxxxx
         if (lowerText.startsWith('.add ')) {
           try {
             const number = rawText.replace('.add', '').trim();
             const jidNum = number.includes('@') ? number : `${number}@s.whatsapp.net`;
             await sock.groupParticipantsUpdate(jid, [jidNum], 'add');
             await sock.sendMessage(jid, { text: `✅ User ${number} has been added!` });
-          } catch (e) { 
-            await sock.sendMessage(jid, { text: '❌ Failed to add user. Make sure number is valid and I am admin!' }); 
-          }
+          } catch (e) { await sock.sendMessage(jid, { text: '❌ Failed to add user. Make sure number is valid and I am admin!' }); }
           return;
         }
 
-        // .admins
         if (lowerText === '.admins') {
           try {
             const meta = await sock.groupMetadata(jid);
             const admins = meta.participants.filter(p => p.admin !== null).map(p => p.id);
-            await sock.sendMessage(jid, { 
-              text: `👑 *Admins*\n\n${admins.map(id => `@${id.split('@')[0]}`).join('\n')}`,
-              mentions: admins
-            });
-          } catch (e) { 
-            await sock.sendMessage(jid, { text: '❌ Failed to get admin list!' }); 
-          }
+            await sock.sendMessage(jid, { text: `👑 *Admins*\n\n${admins.map(id => `@${id.split('@')[0]}`).join('\n')}`, mentions: admins });
+          } catch (e) { await sock.sendMessage(jid, { text: '❌ Failed to get admin list!' }); }
           return;
         }
 
-        // .groupinfo
         if (lowerText === '.groupinfo' || lowerText === '.gcinfo') {
           try {
             const meta = await sock.groupMetadata(jid);
-            await sock.sendMessage(jid, { 
-              text: `📋 *Group Info*\n\n📛 Name: ${meta.subject}\n👥 Members: ${meta.participants.length}\n📅 Created: ${new Date(meta.creation * 1000).toLocaleDateString()}\n👑 Owner: @${meta.owner.split('@')[0]}\n\n📝 Description: ${meta.desc || 'No description'}`,
-              mentions: [meta.owner]
-            });
-          } catch (e) { 
-            await sock.sendMessage(jid, { text: '❌ Failed to get group info!' }); 
-          }
+            await sock.sendMessage(jid, { text: `📋 *Group Info*\n\n📛 Name: ${meta.subject}\n👥 Members: ${meta.participants.length}\n📅 Created: ${new Date(meta.creation * 1000).toLocaleDateString()}\n👑 Owner: @${meta.owner.split('@')[0]}\n\n📝 Description: ${meta.desc || 'No description'}`, mentions: [meta.owner] });
+          } catch (e) { await sock.sendMessage(jid, { text: '❌ Failed to get group info!' }); }
           return;
         }
       }
 
-      // ============================================
-      // DEFAULT RESPONSE FOR UNKNOWN COMMANDS
-      // ============================================
       if (lowerText.startsWith('.')) {
-        await sock.sendMessage(jid, { 
-          text: `❌ Unknown command!\n\nType *${'.menu'}* to see all available commands.` 
-        });
+        await sock.sendMessage(jid, { text: `❌ Unknown command!\n\nType *${'.menu'}* to see all available commands.` });
       }
     }
   });
@@ -580,6 +656,11 @@ async function startWhatsAppBot() {
       console.log('✅ WhatsApp connected successfully!'); 
       console.log('📡 Bot is online and ready to respond in ALL chats!');
       console.log('📌 Use .menu to see all commands');
+      console.log(`📌 GitHub Auto-Sync: ${AUTO_SYNC_ENABLED ? '✅ ENABLED' : '❌ DISABLED'}`);
+      
+      // Initialize git on startup
+      await initGitRepo();
+      
       await sendConnectionNotice(); 
       await checkAndShareAllNewNews(); 
     }
@@ -938,7 +1019,7 @@ async function fetchSirasaNews() {
 }
 
 async function fetchAllLatestNews() {
-  console.log('\n📰 ===== FETCHING =====');
+  console.log('\n📰 ===== FETCHING NEWS =====');
   const sources = [
     { name: 'Hiru', fn: fetchHiruNews }, 
     { name: 'Derana', fn: fetchDeranaNews }, 
@@ -974,7 +1055,7 @@ async function fetchAllLatestNews() {
       uniq.push(n); 
     } 
   }
-  console.log(`📊 Unique: ${uniq.length}\n`);
+  console.log(`📊 Total Unique: ${uniq.length}\n`);
   return uniq;
 }
 
@@ -1039,6 +1120,7 @@ async function checkAndShareAllNewNews() {
   console.log('🌐 ' + PORTFOLIO_URL);
   console.log('📌 Bot will respond in ALL chats!');
   console.log('📌 Use .menu for commands');
+  console.log(`📌 GitHub Auto-Sync: ${AUTO_SYNC_ENABLED ? '✅ ENABLED' : '❌ DISABLED'}`);
   console.log('━━━━━━━━━━━━━━━━━━━━━━━');
   await startWhatsAppBot(); 
   setInterval(() => checkAndShareAllNewNews(), CHECK_INTERVAL_MS); 
