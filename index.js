@@ -20,8 +20,8 @@ try { if (fs.existsSync(path.join(__dirname, 'app.pid'))) fs.unlinkSync(path.joi
 // ============================================
 // CONFIGURATION
 // ============================================
-const GROUP_JID = process.env.GROUP_JID || '// GROUP JID HERE'; //GROUP JID HERE
-const OWNER_JID = process.env.OWNER_JID || '//YOUR WHATSAPP NUMBER HERE@s.whatsapp.net'; // YOUR WHATSAPP NUMBER HERE
+const GROUP_JID = process.env.GROUP_JID || '120363427636501059@g.us';
+const OWNER_JID = process.env.OWNER_JID || '94784745155@s.whatsapp.net';
 const CHECK_INTERVAL_MS = Number(process.env.CHECK_INTERVAL_MS || 60000);
 const STATE_FILE = path.join(__dirname, 'last-news.json');
 const SAVE_FOLDER = path.join(__dirname, 'saved_media');
