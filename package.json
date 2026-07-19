@@ -1,25 +1,51 @@
 {
+  "name": "newsbot-lk",
+  "version": "9.0.0",
+  "description": "💝 NewsBot LK - Sri Lanka's #1 WhatsApp News Bot with Beautiful UI | Sinhala & English Voice Replies | Native WhatsApp Buttons",
+  "main": "index.js",
   "scripts": {
-    "start": "npx -y node@20 app.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "node test.js",
+    "lint": "eslint .",
+    "clean": "rm -rf node_modules package-lock.json && npm install"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/charukamahesh922-collab/protifilo.git"
+  },
+  "keywords": [
+    "whatsapp-bot",
+    "news-bot",
+    "sri-lanka",
+    "sinhala",
+    "baileys",
+    "whatsapp",
+    "news-aggregator",
+    "voice-replies",
+    "native-buttons",
+    "mongoose",
+    "newsbot-lk"
+  ],
+  "author": {
+    "name": "Charuka Mahesh",
+    "url": "https://charukamahesh922-collab.github.io/protifilo/"
+  },
+  "license": "MIT",
   "engines": {
-    "node": ">=20 <21"
+    "node": ">=20.0.0"
   },
   "dependencies": {
-    "@mrhansamala/lankadeepa-news": "^1.0.0",
-    "@sl-code-lords/esana-news": "^1.1.0",
+    "@dark-yasiya/news-scrap": "^2.0.1",
     "@whiskeysockets/baileys": "^7.0.0-rc13",
     "ada-derana-news-scraper": "^1.0.0",
-    "axios": "^1.18.1",
-    "esana-news-scraper": "^1.1.1",
-    "esana-node-api": "^3.0.1",
-    "google-news-decoder": "^1.0.1",
-    "hiru-news": "^1.1.2",
+    "axios": "^1.7.0",
     "hirunews-scrap": "^2.0.1",
-    "link-preview-js": "^3.2.0",
-    "@dark-yasiya/news-scrap": "^2.0.1",
-    "qrcode-terminal": "^0.12.0",
-    "sportylk-scraper": "^1.0.0",
-    "xml2js": "^0.6.2"
+    "mongoose": "^8.0.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0",
+    "eslint": "^8.50.0"
   }
 }
