@@ -203,7 +203,7 @@
 
 ---
 
-## 📦 Local Setup
+## 📦 Local Setup For Testing
 
 ```bash
 # 1. Clone the repository
