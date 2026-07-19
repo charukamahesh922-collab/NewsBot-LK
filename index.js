@@ -1,10 +1,14 @@
-// ============================================
-// 💝 NewsBot LK v9.0.0 - Beautiful Edition
-// 👨‍💻 Developed by Charuka Mahesh
-// 💛 Dedicated to Umesha Sathyanjali | Mithila | Sharada
-// 🌐 https://charukamahesh922-collab.github.io/protifilo/
-// ============================================
+// ╔══════════════════════════════════════════════════════════════╗
+// ║                    💝 NEWS BOT LK 💝                        ║
+// ║                  🦄 Beautiful Edition 🦄                    ║
+// ║              Developed by Charuka Mahesh                     ║
+// ║     Dedicated to Umesha Sathyanjali | Mithila | Sharada     ║
+// ║                  Version: 9.0.0 ✨                           ║
+// ╚══════════════════════════════════════════════════════════════╝
 
+// ============================================================
+// 📦 DEPENDENCIES
+// ============================================================
 const fs = require('fs');
 const path = require('path');
 const qrcode = require('qrcode-terminal');
@@ -15,44 +19,51 @@ const Derana = require('ada-derana-news-scraper');
 const DY_NEWS = require('@dark-yasiya/news-scrap');
 const config = require('./config');
 const voiceClips = require('./voiceReplies');
+
 const dynews = new DY_NEWS();
 
-// 🧹 Cleanup
-try { 
+// ============================================================
+// 🧹 CLEANUP
+// ============================================================
+try {
     if (fs.existsSync(path.join(__dirname, 'app.pid'))) {
         fs.unlinkSync(path.join(__dirname, 'app.pid'));
     }
 } catch (e) {}
+
 console.log('🧹 Cleanup complete');
 
-// ═══════════════════════════════════════
-// 📦 CONFIGURATION
-// ═══════════════════════════════════════
+// ============================================================
+// ⚙️ CONFIGURATION
+// ============================================================
 const OWNER_NUMBERS = Array.isArray(config.ownerNumber) 
     ? config.ownerNumber 
     : [config.ownerNumber];
+
 const NEWS_GROUP_JID = config.newsGroupJid;
 const CHECK_INTERVAL_MS = config.checkIntervalMs;
 const BOT_LOGO = config.botLogo;
 const FALLBACK_IMAGE = config.fallbackImage;
 const REACTIONS = config.reactions;
+
 const SAVE_FOLDER = path.join(__dirname, 'saved_media');
 const STATUS_FOLDER = path.join(__dirname, 'saved_status');
 const VV_FOLDER = path.join(__dirname, 'view_once_saved');
 const TEST_MODE = true;
 
-// Create folders
+// Create required folders
 [SAVE_FOLDER, STATUS_FOLDER, VV_FOLDER].forEach(folder => {
     if (!fs.existsSync(folder)) {
         fs.mkdirSync(folder, { recursive: true });
     }
 });
 
-// ═══════════════════════════════════════
+// ============================================================
 // 🗄️ JSON DATABASE (Fallback)
-// ═══════════════════════════════════════
+// ============================================================
 const JSON_DB_FILE = path.join(__dirname, 'database.json');
 let useJsonFallback = false;
+
 let jsonDb = {
     settings: {},
     warnings: {},
@@ -89,9 +100,9 @@ function saveJsonDb() {
     }
 }
 
-// ═══════════════════════════════════════
+// ============================================================
 // 🍃 MONGOOSE SCHEMAS
-// ═══════════════════════════════════════
+// ============================================================
 const settingSchema = new mongoose.Schema({
     key: { type: String, unique: true, required: true },
     value: { type: mongoose.Schema.Types.Mixed, required: true },
@@ -125,10 +136,11 @@ const groupSettingSchema = new mongoose.Schema({
 
 let Setting, Warning, Ban, Afk, GroupSetting;
 
-// ═══════════════════════════════════════
+// ============================================================
 // 🔌 DATABASE CONNECTION
-// ═══════════════════════════════════════
+// ============================================================
 async function connectDatabase() {
+    // Check if MongoDB is disabled
     if (process.env.MONGO_ENABLED === 'false') {
         useJsonFallback = true;
         loadJsonDb();
@@ -152,13 +164,14 @@ async function connectDatabase() {
                 retryWrites: false
             });
 
+            // Initialize models
             Setting = mongoose.model('Setting', settingSchema);
             Warning = mongoose.model('Warning', warningSchema);
             Ban = mongoose.model('Ban', banSchema);
             Afk = mongoose.model('Afk', afkSchema);
             GroupSetting = mongoose.model('GroupSetting', groupSettingSchema);
 
-            // Initialize default settings
+            // Initialize default settings if empty
             if (await Setting.countDocuments() === 0) {
                 for (const [key, value] of Object.entries(config.defaults)) {
                     await Setting.create({ key, value });
@@ -168,27 +181,29 @@ async function connectDatabase() {
             console.log('✅ Mongoose Connected');
             return true;
 
-        } catch (e) {
-            console.error('❌ MongoDB Connection Failed:', e.message);
+        } catch (error) {
+            console.error('❌ MongoDB Connection Failed:', error.message);
             if (mongoose.connection.readyState !== 0) {
                 await mongoose.disconnect();
             }
         }
     }
 
+    // Fallback to JSON if all MongoDB URLs fail
     useJsonFallback = true;
     loadJsonDb();
     console.log('⚠️ Falling back to JSON Database');
     return false;
 }
 
-// ═══════════════════════════════════════
+// ============================================================
 // 🗃️ DATABASE OPERATIONS
-// ═══════════════════════════════════════
+// ============================================================
 const db = {
+    // Check if using JSON fallback
     isJson: () => useJsonFallback,
 
-    // Settings
+    // Get a setting
     get: async (key, defaultValue) => {
         if (useJsonFallback) {
             return jsonDb.settings[key] ?? config.defaults[key] ?? defaultValue;
@@ -201,6 +216,7 @@ const db = {
         }
     },
 
+    // Set a setting
     set: async (key, value) => {
         console.log(`💾 DB: ${key} = ${value}`);
         if (useJsonFallback) {
@@ -220,6 +236,7 @@ const db = {
         }
     },
 
+    // Get all settings
     all: async () => {
         if (useJsonFallback) {
             return { ...config.defaults, ...jsonDb.settings };
@@ -227,16 +244,14 @@ const db = {
         try {
             const docs = await Setting.find({});
             const settings = {};
-            docs.forEach(doc => {
-                settings[doc.key] = doc.value;
-            });
+            docs.forEach(doc => { settings[doc.key] = doc.value; });
             return { ...config.defaults, ...settings };
         } catch {
             return { ...config.defaults };
         }
     },
 
-    // Warnings
+    // Warning system
     warnAdd: async (userId, groupId) => {
         if (useJsonFallback) {
             const key = `${userId}_${groupId}`;
@@ -270,7 +285,7 @@ const db = {
         }
     },
 
-    // Bans
+    // Ban system
     banAdd: async (userId, reason = '') => {
         if (useJsonFallback) {
             if (!jsonDb.bans.find(b => b.userId === userId)) {
@@ -321,9 +336,7 @@ const db = {
     },
 
     banAll: async () => {
-        if (useJsonFallback) {
-            return jsonDb.bans;
-        }
+        if (useJsonFallback) return jsonDb.bans;
         try {
             return await Ban.find({});
         } catch {
@@ -331,7 +344,7 @@ const db = {
         }
     },
 
-    // AFK
+    // AFK system
     afkSet: async (userId, reason) => {
         if (useJsonFallback) {
             jsonDb.afk[userId] = {
@@ -369,9 +382,7 @@ const db = {
     },
 
     afkGet: async (userId) => {
-        if (useJsonFallback) {
-            return jsonDb.afk[userId] || null;
-        }
+        if (useJsonFallback) return jsonDb.afk[userId] || null;
         try {
             return await Afk.findOne({ userId });
         } catch {
@@ -379,7 +390,7 @@ const db = {
         }
     },
 
-    // Group Settings
+    // Group settings
     groupGet: async (groupId, key, defaultValue) => {
         if (useJsonFallback) {
             return jsonDb.groupSettings[groupId]?.[key] ?? defaultValue;
@@ -413,11 +424,9 @@ const db = {
         }
     },
 
-    // URL Tracking
+    // URL tracking for news
     urlsGet: async () => {
-        if (useJsonFallback) {
-            return jsonDb.sentUrls || [];
-        }
+        if (useJsonFallback) return jsonDb.sentUrls || [];
         try {
             const doc = await Setting.findOne({ key: 'sentUrls' });
             return doc?.value || [];
@@ -447,9 +456,7 @@ const db = {
     },
 
     urlsCount: async () => {
-        if (useJsonFallback) {
-            return jsonDb.sentUrls.length;
-        }
+        if (useJsonFallback) return jsonDb.sentUrls.length;
         try {
             const doc = await Setting.findOne({ key: 'sentUrls' });
             return doc?.value?.length || 0;
@@ -459,90 +466,66 @@ const db = {
     }
 };
 
-// ═══════════════════════════════════════
-// 🎨 BEAUTIFUL UI HELPERS
-// ═══════════════════════════════════════
+// ============================================================
+// 🎨 BEAUTIFUL UI SYSTEM
+// ============================================================
 
-// Beautiful borders and dividers
-const BORDERS = {
-    single: '━',
-    double: '═',
-    dashed: '┄',
-    dotted: '┅',
-    star: '✧',
-    heart: '♥',
-    sparkle: '✦'
-};
-
-const EMOJIS = {
-    bot: '🦄',
-    crown: '👑',
-    star: '⭐',
-    sparkle: '✨',
-    heart: '💝',
-    fire: '🔥',
-    news: '📰',
-    settings: '⚙️',
-    menu: '📋',
-    stats: '📊',
-    media: '💾',
-    voice: '🎵',
-    lock: '🔒',
-    unlock: '🔓',
-    check: '✅',
-    cross: '❌',
-    warn: '⚠️',
-    ban: '🚫',
-    admin: '🛡️',
-    group: '👥',
-    world: '🌍',
-    robot: '🤖',
-    rocket: '🚀',
-    mail: '📨',
-    save: '💾',
-    eye: '👁️',
-    muted: '🔇',
-    unmuted: '🔊',
-    link: '🔗',
-    afk: '💤',
-    bio: '📝',
-    wave: '👋',
-    party: '🎉',
-    sad: '😢'
-};
-
-// Beautiful footer
+/**
+ * 💝 Beautiful Footer
+ * Appears on ALL bot messages
+ */
 const beautifulFooter = () => {
     return [
         '',
-        `${'━'.repeat(25)}`,
-        `🦄💝 *\`NewsBot LK | Charuka Mahesh\`* 💝🦄`,
-        `💝 *\`Umesha Sathyanjali & Mithila Sharada\`* 💝`,
-        ''
+        '╭' + '─'.repeat(35) + '╮',
+        '┃  🦄💝 *NewsBot LK* 💝🦄  ┃',
+        '┃   💝 *Charuka Mahesh* 💝   ┃',
+        '╰' + '─'.repeat(35) + '╯',
+        '',
+        '💝 *Umesha Sathyanjali* 💝',
+        '💝 *Mithila & Sharada* 💝'
     ].join('\n');
 };
 
-// Beautiful header
-const beautifulHeader = (title = 'NewsBot LK') => {
+/**
+ * 💝 Beautiful Header
+ * Used for menus and info displays
+ */
+const beautifulHeader = () => {
     return [
-        `╭${'─'.repeat(30)}╮`,
-        `┃     💝 *${title}* 💝`,
-        `┃     🦄 v${config.version}`,
-        `╰${'─'.repeat(30)}╯`,
-        ''
+        '╭' + '─'.repeat(38) + '╮',
+        '┃     💝 *NewsBot LK* 💝     ┃',
+        '┃  🦄 ✨ *Sri Lanka\'s #1* ✨ 🦄  ┃',
+        '┃    *WhatsApp News Bot*     ┃',
+        '╰' + '─'.repeat(38) + '╯'
     ].join('\n');
 };
 
-// Section divider
-const sectionDivider = (title, emoji = '✦') => {
-    const line = '─'.repeat(10);
+/**
+ * 💝 Section Divider
+ * @param {string} title - Section title
+ * @param {string} emoji - Emoji for the section
+ */
+const sectionDivider = (title, emoji) => {
+    const line = '─'.repeat(8);
     return `\n${emoji} ${line} *${title}* ${line} ${emoji}\n`;
 };
 
-// Status badge
-const statusBadge = (enabled) => enabled ? '✅ *ON*' : '❌ *OFF*';
+/**
+ * 💝 Status Badge
+ * Shows ON/OFF status with emoji
+ */
+const statusBadge = (enabled) => {
+    return enabled ? '✅ *ON*' : '❌ *OFF*';
+};
 
-// Clean text
+// ============================================================
+// 🧹 TEXT UTILITIES
+// ============================================================
+
+/**
+ * Clean HTML text
+ */
 const cleanText = (text) => {
     if (!text) return '';
     return text
@@ -560,9 +543,12 @@ const cleanText = (text) => {
         .trim();
 };
 
-// Smart truncate
+/**
+ * Smart text truncation
+ */
 const truncate = (text, maxLength = 5000) => {
     if (!text || text.length <= maxLength) return text;
+    
     const shortened = text.substring(0, maxLength);
     const breakPoints = [
         shortened.lastIndexOf('. '),
@@ -576,17 +562,22 @@ const truncate = (text, maxLength = 5000) => {
     }
 
     const lastSpace = shortened.lastIndexOf(' ');
-    return lastSpace > maxLength * 0.7
-        ? shortened.substring(0, lastSpace).trim() + '...'
-        : shortened.trim() + '...';
+    if (lastSpace > maxLength * 0.7) {
+        return shortened.substring(0, lastSpace).trim() + '...';
+    }
+    return shortened.trim() + '...';
 };
 
-// Random emoji
-const randomEmoji = (array) => array[Math.floor(Math.random() * array.length)];
+/**
+ * Get random emoji from array
+ */
+const randEmoji = (array) => {
+    return array[Math.floor(Math.random() * array.length)];
+};
 
-// ═══════════════════════════════════════
-// 🔐 AUTH & PERMISSIONS
-// ═══════════════════════════════════════
+// ============================================================
+// 🔐 AUTHENTICATION & PERMISSIONS
+// ============================================================
 let sock = null;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
@@ -595,6 +586,9 @@ let isShuttingDown = false;
 let lastStatusTime = 0;
 let ownerJid = null;
 
+/**
+ * Check if sender is bot owner
+ */
 function isOwner(senderNumber, senderJid) {
     const cleanNumber = senderNumber.replace(/[^0-9]/g, '');
     
@@ -610,6 +604,9 @@ function isOwner(senderNumber, senderJid) {
     return false;
 }
 
+/**
+ * Check if user can use bot based on mode
+ */
 async function canUseBot(jid, isUserOwner) {
     if (isUserOwner) return true;
     
@@ -617,17 +614,16 @@ async function canUseBot(jid, isUserOwner) {
     const isGroup = jid.endsWith('@g.us');
     
     switch (mode) {
-        case 'private':
-            return false;
-        case 'inbox':
-            return !isGroup;
-        case 'groups':
-            return isGroup;
-        default:
-            return true;
+        case 'private': return false;
+        case 'inbox': return !isGroup;
+        case 'groups': return isGroup;
+        default: return true;
     }
 }
 
+/**
+ * Check if sender is group admin
+ */
 async function checkAdmin(jid, sender) {
     try {
         const metadata = await sock.groupMetadata(jid);
@@ -638,9 +634,13 @@ async function checkAdmin(jid, sender) {
     }
 }
 
-// ═══════════════════════════════════════
+// ============================================================
 // 📥 MEDIA HANDLERS
-// ═══════════════════════════════════════
+// ============================================================
+
+/**
+ * Download media from message
+ */
 async function downloadMedia(msg) {
     try {
         const baileys = await import('@whiskeysockets/baileys');
@@ -661,6 +661,9 @@ async function downloadMedia(msg) {
     }
 }
 
+/**
+ * Save media to file
+ */
 async function saveMediaToFile(msg, folder = SAVE_FOLDER) {
     try {
         let realMessage = msg;
@@ -675,6 +678,7 @@ async function saveMediaToFile(msg, folder = SAVE_FOLDER) {
             }
         }
 
+        // Map message types to file extensions
         const extensionMap = {
             imageMessage: '.jpg',
             videoMessage: '.mp4',
@@ -702,9 +706,9 @@ async function saveMediaToFile(msg, folder = SAVE_FOLDER) {
     }
 }
 
-// ═══════════════════════════════════════
-// 📝 AUTO BIO UPDATER
-// ═══════════════════════════════════════
+/**
+ * Update bot bio/profile status
+ */
 async function updateBotBio() {
     if (!sock || !isConnected) return;
     if (!await db.get('autoBioEnabled', true)) return;
@@ -731,15 +735,14 @@ async function updateBotBio() {
         ].join('\n');
 
         await sock.updateProfileStatus(bio);
-        console.log('📝 Bio updated');
     } catch (e) {
-        console.error('❌ Bio update failed:', e.message);
+        // Silent fail
     }
 }
 
-// ═══════════════════════════════════════
-// 📱 STATUS HANDLER
-// ═══════════════════════════════════════
+/**
+ * Handle WhatsApp status updates
+ */
 async function handleStatus(msg) {
     if (!sock) return;
 
@@ -750,25 +753,23 @@ async function handleStatus(msg) {
         const participant = key.participant || key.remoteJid;
         if (!participant || participant === sock.user?.id) return;
 
-        // Rate limit
+        // Rate limit status handling
         if (Date.now() - lastStatusTime < 3000) return;
         lastStatusTime = Date.now();
 
-        const senderNumber = participant.split('@')[0].replace(/:.*/, '');
-
-        // Anti view-once
+        // Anti view-once check
         if (
             await db.get('antiViewOnce', false) &&
             (msg.message?.imageMessage?.viewOnce || msg.message?.videoMessage?.viewOnce)
         ) return;
 
-        // Auto view
+        // Auto view status
         if (!await db.get('autoStatusView', true)) return;
         await sock.readMessages([key]);
 
-        // Auto react
+        // Auto react to status
         if (await db.get('autoStatusReact', true)) {
-            const emoji = randomEmoji(config.statusEmojis);
+            const emoji = randEmoji(config.statusEmojis);
             try {
                 await sock.sendMessage('status@broadcast', {
                     react: { text: emoji, key }
@@ -782,201 +783,16 @@ async function handleStatus(msg) {
     }
 }
 
-// ═══════════════════════════════════════
-// 🎀 BEAUTIFUL MENUS
-// ═══════════════════════════════════════
+// ============================================================
+// 🎨 BEAUTIFUL MENU DISPLAYS
+// ============================================================
 
-// 💝 Beautiful Connected Message
-async function sendConnectedMessage() {
-    if (!ownerJid) return;
-    
-    const message = [
-        beautifulHeader(`${config.botName}`),
-        '',
-        `✨ *Bot Successfully Connected!* ✨`,
-        '',
-        `🦄💝 *\`NewsBot LK\`* 💝🦄`,
-        `💝 *\`Charuka Mahesh\`* 💝`,
-        '',
-        `${'━'.repeat(25)}`,
-        '',
-        `${EMOJIS.check} *Status: Connected*`,
-        `${EMOJIS.heart} *Status React: ${statusBadge(await db.get('autoStatusReact', true))}*`,
-        `${EMOJIS.menu} *.menu: Show Menu*`,
-        `${EMOJIS.settings} *.settings: Settings*`,
-        '',
-        `${'━'.repeat(25)}`,
-        '',
-        `💝 *\`Dedicated to:\`*`,
-        `🌸 *Umesha Sathyanjali*`,
-        `🌸 *Mithila*`,
-        `🌸 *Sharada*`,
-        '',
-        `🦄💝 *\`NewsBot LK | Charuka Mahesh\`* 💝🦄`,
-        ''
-    ].join('\n');
-
-    try {
-        await sock.sendMessage(ownerJid, {
-            image: { url: BOT_LOGO },
-            caption: message,
-            mimetype: 'image/png'
-        });
-    } catch (e) {
-        console.error('❌ Failed to send connected message');
-    }
-}
-
-// Native WhatsApp Buttons
-async function sendNativeButtons(sock, jid, db, config, owner, admin, prefix) {
-    const mode = await db.get('botMode', 'public');
-    const modeEmojis = {
-        private: '🔒',
-        inbox: '📥',
-        groups: '👥',
-        public: '🌍'
-    };
-
-    const buttons = [
-        {
-            name: "quick_reply",
-            buttonParamsJson: JSON.stringify({
-                display_text: "📰 News",
-                id: "btn_news"
-            })
-        },
-        {
-            name: "quick_reply",
-            buttonParamsJson: JSON.stringify({
-                display_text: "📋 Full Menu",
-                id: "btn_menu"
-            })
-        },
-        {
-            name: "quick_reply",
-            buttonParamsJson: JSON.stringify({
-                display_text: "⚙️ Settings",
-                id: "btn_settings"
-            })
-        },
-        {
-            name: "quick_reply",
-            buttonParamsJson: JSON.stringify({
-                display_text: "💾 Save Media",
-                id: "btn_save"
-            })
-        },
-        {
-            name: "quick_reply",
-            buttonParamsJson: JSON.stringify({
-                display_text: "📥 View-Once",
-                id: "btn_vv"
-            })
-        }
-    ];
-
-    if (admin || owner) {
-        buttons.push(
-            {
-                name: "quick_reply",
-                buttonParamsJson: JSON.stringify({
-                    display_text: "🎵 Voice ON",
-                    id: "btn_voice_on"
-                })
-            },
-            {
-                name: "quick_reply",
-                buttonParamsJson: JSON.stringify({
-                    display_text: "🎵 Voice OFF",
-                    id: "btn_voice_off"
-                })
-            },
-            {
-                name: "quick_reply",
-                buttonParamsJson: JSON.stringify({
-                    display_text: "🔗 AntiLink ON",
-                    id: "btn_antilink_on"
-                })
-            },
-            {
-                name: "quick_reply",
-                buttonParamsJson: JSON.stringify({
-                    display_text: "🔇 Mute",
-                    id: "btn_mute"
-                })
-            }
-        );
-    }
-
-    if (owner) {
-        buttons.push(
-            {
-                name: "quick_reply",
-                buttonParamsJson: JSON.stringify({
-                    display_text: "🖤 Auto Status",
-                    id: "btn_autostatus_on"
-                })
-            },
-            {
-                name: "quick_reply",
-                buttonParamsJson: JSON.stringify({
-                    display_text: "📝 Auto Bio",
-                    id: "btn_autobio_on"
-                })
-            },
-            {
-                name: "quick_reply",
-                buttonParamsJson: JSON.stringify({
-                    display_text: "🌍 Public Mode",
-                    id: "btn_mode_public"
-                })
-            }
-        );
-    }
-
-    try {
-        const baileys = await import('@whiskeysockets/baileys');
-        const message = baileys.generateWAMessageFromContent(
-            jid,
-            {
-                viewOnceMessage: {
-                    message: {
-                        messageContextInfo: {},
-                        interactiveMessage: baileys.proto.Message.InteractiveMessage.create({
-                            body: baileys.proto.Message.InteractiveMessage.Body.create({
-                                text: [
-                                    `💝 *${config.botName}* v${config.version}`,
-                                    `${modeEmojis[mode]} Mode: ${mode.toUpperCase()}`,
-                                    '',
-                                    `📋 Choose an option:`
-                                ].join('\n')
-                            }),
-                            footer: baileys.proto.Message.InteractiveMessage.Footer.create({
-                                text: "🦄💝 NewsBot LK | Charuka Mahesh 💝🦄"
-                            }),
-                            nativeFlowMessage: baileys.proto.Message.InteractiveMessage.NativeFlowMessage.create({
-                                buttons: buttons
-                            })
-                        })
-                    }
-                }
-            },
-            {}
-        );
-
-        await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
-        console.log('✅ Beautiful buttons sent');
-        return true;
-    } catch (e) {
-        console.log('❌ Buttons failed:', e.message);
-        return false;
-    }
-}
-
-// 💝 Beautiful Full Menu
+/**
+ * 💝 Send Beautiful Full Menu
+ */
 async function sendBeautifulMenu(sock, jid, db, config, owner, admin, isGroup, prefix) {
     const mode = await db.get('botMode', 'public');
-    const modeEmojis = {
+    const modeEmoji = {
         private: '🔒',
         inbox: '📥',
         groups: '👥',
@@ -984,83 +800,89 @@ async function sendBeautifulMenu(sock, jid, db, config, owner, admin, isGroup, p
     };
 
     const menuLines = [
-        `╭${'─'.repeat(35)}╮`,
-        `┃     💝 *${config.botName}* 💝`,
-        `┃     🦄 ✨ ${config.tagline} ✨`,
-        `┃     ${modeEmojis[mode]} Mode: ${mode.toUpperCase()}`,
-        `╰${'─'.repeat(35)}╮`,
+        // Header
+        '╭' + '─'.repeat(40) + '╮',
+        '┃       💝 *NewsBot LK* 💝       ┃',
+        '┃   🦄 ✨ *Sri Lanka\'s #1* ✨ 🦄   ┃',
+        '┃     *WhatsApp News Bot*        ┃',
+        '┃     ' + modeEmoji[mode] + ' Mode: ' + mode.toUpperCase() + '              ┃',
+        '╰' + '─'.repeat(40) + '╯',
+        
+        // News Section
         '',
-        `${sectionDivider('📰 NEWS CENTER', '📡')}`,
-        `  ✦ ${prefix}news    ─ Fetch Latest News`,
-        `  ✦ ${prefix}stats   ─ Bot Statistics`,
+        sectionDivider('📰 NEWS CENTER', '📡'),
+        '  ✦ ' + prefix + 'news    ─ Fetch Latest News',
+        '  ✦ ' + prefix + 'stats   ─ Bot Statistics',
+        
+        // Media Section
         '',
-        `${sectionDivider('💾 MEDIA STUDIO', '📦')}`,
-        `  ✦ ${prefix}save    ─ Save Media Files`,
-        `  ✦ ${prefix}vv      ─ Save View-Once`,
-        `  ✦ ${prefix}status  ─ Status Info`,
+        sectionDivider('💾 MEDIA STUDIO', '📦'),
+        '  ✦ ' + prefix + 'save    ─ Save Media Files',
+        '  ✦ ' + prefix + 'vv      ─ Save View-Once',
+        '  ✦ ' + prefix + 'status  ─ Status Info',
+        
+        // Group Section
         '',
-        `${sectionDivider('👥 GROUP TOOLS', '👑')}`,
-        `  ✦ ${prefix}admins    ─ List Admins`,
-        `  ✦ ${prefix}groupinfo ─ Group Details`,
-        `  ✦ ${prefix}tagall    ─ Mention All`,
-        `  ✦ ${prefix}poll      ─ Create Poll`,
-        `  ✦ ${prefix}afk       ─ Set AFK Status`,
+        sectionDivider('👥 GROUP TOOLS', '👑'),
+        '  ✦ ' + prefix + 'admins    ─ List Admins',
+        '  ✦ ' + prefix + 'groupinfo ─ Group Details',
+        '  ✦ ' + prefix + 'tagall    ─ Mention All',
+        '  ✦ ' + prefix + 'poll      ─ Create Poll',
+        '  ✦ ' + prefix + 'afk       ─ Set AFK Status',
         ''
     ];
 
+    // Admin Commands
     if (admin || owner) {
         menuLines.push(
-            `${sectionDivider('🛡️ ADMIN PANEL', '⚔️')}`,
-            `  ✦ ${prefix}mute/unmute    ─ Toggle Mute`,
-            `  ✦ ${prefix}warn @user     ─ Warn Member`,
-            `  ✦ ${prefix}kick @user     ─ Remove Member`,
-            `  ✦ ${prefix}add 94xxxxxxx  ─ Add Member`,
-            `  ✦ ${prefix}promote @user  ─ Make Admin`,
-            `  ✦ ${prefix}demote @user   ─ Remove Admin`,
-            `  ✦ ${prefix}voice on/off   ─ Toggle Voice`,
-            `  ✦ ${prefix}antilink on/off ─ Link Protection`,
-            `  ✦ ${prefix}welcome on/off  ─ Welcome Message`,
-            `  ✦ ${prefix}goodbye on/off  ─ Goodbye Message`,
-            `  ✦ ${prefix}buttons on/off  ─ Button Menu`,
+            sectionDivider('🛡️ ADMIN PANEL', '⚔️'),
+            '  ✦ ' + prefix + 'mute/unmute    ─ Toggle Mute',
+            '  ✦ ' + prefix + 'warn @user     ─ Warn Member',
+            '  ✦ ' + prefix + 'kick @user     ─ Remove Member',
+            '  ✦ ' + prefix + 'add 94xxxxxxx  ─ Add Member',
+            '  ✦ ' + prefix + 'promote @user  ─ Make Admin',
+            '  ✦ ' + prefix + 'demote @user   ─ Remove Admin',
+            '  ✦ ' + prefix + 'voice on/off   ─ Toggle Voice',
+            '  ✦ ' + prefix + 'antilink on/off ─ Link Protection',
+            '  ✦ ' + prefix + 'welcome on/off  ─ Welcome Msg',
+            '  ✦ ' + prefix + 'goodbye on/off  ─ Goodbye Msg',
+            '  ✦ ' + prefix + 'buttons on/off  ─ Button Menu',
             ''
         );
     }
 
+    // Owner Commands
     if (owner) {
         menuLines.push(
-            `${sectionDivider('👑 OWNER SUITE', '💎')}`,
-            `  ✦ ${prefix}settings        ─ All Settings`,
-            `  ✦ ${prefix}mode public     ─ Bot Mode`,
-            `  ✦ ${prefix}autostatus on/off ─ Auto Status`,
-            `  ✦ ${prefix}autonews on/off  ─ Auto News`,
-            `  ✦ ${prefix}autobio on/off   ─ Auto Bio`,
-            `  ✦ ${prefix}setprefix !     ─ Change Prefix`,
-            `  ✦ ${prefix}broadcast msg   ─ Mass Message`,
-            `  ✦ ${prefix}ban @user       ─ Ban User`,
-            `  ✦ ${prefix}unban @user     ─ Unban User`,
-            `  ✦ ${prefix}banlist         ─ Banned List`,
+            sectionDivider('👑 OWNER SUITE', '💎'),
+            '  ✦ ' + prefix + 'settings        ─ All Settings',
+            '  ✦ ' + prefix + 'mode public     ─ Bot Mode',
+            '  ✦ ' + prefix + 'autostatus on/off ─ Auto Status',
+            '  ✦ ' + prefix + 'autonews on/off  ─ Auto News',
+            '  ✦ ' + prefix + 'autobio on/off   ─ Auto Bio',
+            '  ✦ ' + prefix + 'setprefix !     ─ Change Prefix',
+            '  ✦ ' + prefix + 'broadcast msg   ─ Mass Message',
+            '  ✦ ' + prefix + 'ban @user       ─ Ban User',
+            '  ✦ ' + prefix + 'unban @user     ─ Unban User',
+            '  ✦ ' + prefix + 'banlist         ─ Banned List',
             ''
         );
     }
 
+    // Voice Commands & Footer
     menuLines.push(
-        `${sectionDivider('🎵 VOICE COMMANDS (DM)', '🎤')}`,
-        `  gm ✦ gn ✦ hi ✦ ily ✦ bye`,
-        `  sad ✦ happy ✦ cry ✦ love`,
-        `  ...50+ emotional triggers!`,
+        sectionDivider('🎵 VOICE COMMANDS (DM)', '🎤'),
+        '  gm ✦ gn ✦ hi ✦ ily ✦ bye',
+        '  sad ✦ happy ✦ cry ✦ love',
+        '  ...50+ emotional triggers!',
         '',
-        `${'━'.repeat(35)}`,
-        `🦄💝 *\`NewsBot LK\`* 💝🦄`,
-        `💝 *\`Charuka Mahesh\`* 💝`,
+        '━'.repeat(40),
+        '🌐 ' + config.portfolio,
+        '👨‍💻 ' + config.developer,
+        '📦 Version: ' + config.version,
+        '🔧 Prefix: "' + prefix + '"',
         '',
-        `🌐 ${config.portfolio}`,
-        `👨‍💻 ${config.developer}`,
-        `📦 Version: ${config.version}`,
-        `🔧 Prefix: "${prefix}"`,
-        '',
-        `💝 *\`Umesha Sathyanjali\`*`,
-        `💝 *\`Mithila & Sharada\`*`,
-        ''
+        beautifulFooter()
     );
 
     const caption = menuLines.join('\n');
@@ -1074,64 +896,81 @@ async function sendBeautifulMenu(sock, jid, db, config, owner, admin, isGroup, p
     });
 }
 
-// 💝 Beautiful Settings Panel
+/**
+ * 💝 Send Beautiful Settings Panel
+ */
 async function sendBeautifulSettings(sock, jid, db, isOwner, config) {
     if (!isOwner) {
         await sock.sendMessage(jid, {
-            text: `❌ *Owner Only Command!*\n${beautifulFooter()}`
+            text: '╭' + '─'.repeat(30) + '╮\n┃  ❌ *Owner Only!*  ┃\n╰' + '─'.repeat(30) + '╯' + beautifulFooter()
         });
         return;
     }
 
     const settings = await db.all();
     const bans = await db.banAll();
-    const modeEmojis = {
+    const modeEmoji = {
         private: '🔒',
         inbox: '📥',
         groups: '👥',
         public: '🌍'
     };
 
-    const settingsLines = [
-        beautifulHeader('⚙️ Bot Settings'),
+    const msg = [
+        // Header
+        '╭' + '─'.repeat(38) + '╮',
+        '┃         ⚙️ *Bot Settings*         ┃',
+        '┃         💝 NewsBot LK 💝         ┃',
+        '╰' + '─'.repeat(38) + '╯',
+        
+        // News
         '',
-        `${sectionDivider('📰 NEWS', '📡')}`,
-        `  ▸ Auto News: ${statusBadge(settings.autoNewsEnabled)}`,
+        sectionDivider('📰 NEWS', '📡'),
+        '  ▸ Auto News: ' + statusBadge(settings.autoNewsEnabled),
+        
+        // Status
         '',
-        `${sectionDivider('🖤 STATUS', '📱')}`,
-        `  ▸ Auto View: ${statusBadge(settings.autoStatusView)}`,
-        `  ▸ Auto React: ${statusBadge(settings.autoStatusReact)}`,
+        sectionDivider('🖤 STATUS', '📱'),
+        '  ▸ Auto View: ' + statusBadge(settings.autoStatusView),
+        '  ▸ Auto React: ' + statusBadge(settings.autoStatusReact),
+        
+        // Security
         '',
-        `${sectionDivider('🔒 SECURITY', '🛡️')}`,
-        `  ▸ Anti-Link: ${statusBadge(settings.antiLinkEnabled)}`,
-        `  ▸ Anti VV: ${statusBadge(settings.antiViewOnce)}`,
+        sectionDivider('🔒 SECURITY', '🛡️'),
+        '  ▸ Anti-Link: ' + statusBadge(settings.antiLinkEnabled),
+        '  ▸ Anti VV: ' + statusBadge(settings.antiViewOnce),
+        
+        // Voice
         '',
-        `${sectionDivider('🎵 VOICE', '🎤')}`,
-        `  ▸ Voice Replies: ${statusBadge(settings.voiceReplyEnabled)}`,
+        sectionDivider('🎵 VOICE', '🎤'),
+        '  ▸ Voice Replies: ' + statusBadge(settings.voiceReplyEnabled),
+        
+        // Display
         '',
-        `${sectionDivider('📝 DISPLAY', '✨')}`,
-        `  ▸ Auto Bio: ${statusBadge(settings.autoBioEnabled)}`,
-        `  ▸ Button Menu: ${statusBadge(settings.buttonMenuEnabled)}`,
+        sectionDivider('📝 DISPLAY', '✨'),
+        '  ▸ Auto Bio: ' + statusBadge(settings.autoBioEnabled),
+        '  ▸ Button Menu: ' + statusBadge(settings.buttonMenuEnabled),
+        
+        // Group
         '',
-        `${sectionDivider('👥 GROUP', '👑')}`,
-        `  ▸ Welcome: ${statusBadge(settings.welcomeEnabled)}`,
-        `  ▸ Goodbye: ${statusBadge(settings.goodbyeEnabled)}`,
+        sectionDivider('👥 GROUP', '👑'),
+        '  ▸ Welcome: ' + statusBadge(settings.welcomeEnabled),
+        '  ▸ Goodbye: ' + statusBadge(settings.goodbyeEnabled),
+        
+        // System
         '',
-        `${sectionDivider('🔧 SYSTEM', '⚙️')}`,
-        `  ▸ Prefix: "${settings.prefix || '.'}"`,
-        `  ▸ Mode: ${modeEmojis[settings.botMode] || '🌍'} ${(settings.botMode || 'public').toUpperCase()}`,
-        `  ▸ Banned Users: ${bans.length}`,
-        `  ▸ Version: v${config.version}`,
+        sectionDivider('🔧 SYSTEM', '⚙️'),
+        '  ▸ Prefix: "' + (settings.prefix || '.') + '"',
+        '  ▸ Mode: ' + (modeEmoji[settings.botMode] || '🌍') + ' ' + (settings.botMode || 'public').toUpperCase(),
+        '  ▸ Banned: ' + bans.length,
+        '  ▸ Version: v' + config.version,
         '',
-        `${'━'.repeat(30)}`,
-        `🦄💝 *\`NewsBot LK\`* 💝🦄`,
-        ''
-    ];
+        beautifulFooter()
+    ].join('\n');
 
-    const caption = settingsLines.join('\n');
     const sent = await sock.sendMessage(jid, {
         image: { url: BOT_LOGO },
-        caption: caption,
+        caption: msg,
         mimetype: 'image/png'
     });
     await sock.sendMessage(jid, {
@@ -1139,41 +978,50 @@ async function sendBeautifulSettings(sock, jid, db, isOwner, config) {
     });
 }
 
-// 💝 Beautiful Stats
+/**
+ * 💝 Send Beautiful Stats
+ */
 async function sendBeautifulStats(sock, jid, db, config) {
     const settings = await db.all();
     const urlCount = await db.urlsCount();
 
-    const statsLines = [
-        beautifulHeader('📊 Statistics'),
+    const txt = [
+        // Header
+        '╭' + '─'.repeat(38) + '╮',
+        '┃         📊 *Statistics*           ┃',
+        '┃         💝 NewsBot LK 💝         ┃',
+        '╰' + '─'.repeat(38) + '╯',
+        
+        // Overview
         '',
-        `${sectionDivider('📊 OVERVIEW', '📈')}`,
-        `  📰 News Shared: *${urlCount}*`,
-        `  📱 Status Saved: *${fs.readdirSync(STATUS_FOLDER).length}*`,
-        `  💾 Media Saved: *${fs.readdirSync(SAVE_FOLDER).length}*`,
-        `  🔄 Check Interval: *${CHECK_INTERVAL_MS / 1000}s*`,
+        sectionDivider('📊 OVERVIEW', '📈'),
+        '  📰 News Shared: *' + urlCount + '*',
+        '  📱 Status Saved: *' + fs.readdirSync(STATUS_FOLDER).length + '*',
+        '  💾 Media Saved: *' + fs.readdirSync(SAVE_FOLDER).length + '*',
+        '  🔄 Interval: *' + (CHECK_INTERVAL_MS / 1000) + 's*',
+        
+        // Status
         '',
-        `${sectionDivider('⚙️ STATUS', '📋')}`,
-        `  📰 Auto News: ${statusBadge(settings.autoNewsEnabled)}`,
-        `  🖤 Status React: ${statusBadge(settings.autoStatusReact)}`,
-        `  🎵 Voice: ${statusBadge(settings.voiceReplyEnabled)}`,
-        `  📝 Auto Bio: ${statusBadge(settings.autoBioEnabled)}`,
+        sectionDivider('⚙️ STATUS', '📋'),
+        '  📰 Auto News: ' + statusBadge(settings.autoNewsEnabled),
+        '  🖤 Status React: ' + statusBadge(settings.autoStatusReact),
+        '  🎵 Voice: ' + statusBadge(settings.voiceReplyEnabled),
+        '  📝 Auto Bio: ' + statusBadge(settings.autoBioEnabled),
         '',
-        `🔧 Prefix: "${settings.prefix || '.'}"`,
+        '🔧 Prefix: "' + (settings.prefix || '.') + '"',
         '',
         beautifulFooter()
-    ];
+    ].join('\n');
 
-    const caption = statsLines.join('\n');
-    const sent = await sock.sendMessage(jid, { text: caption });
+    const sent = await sock.sendMessage(jid, { text: txt });
     await sock.sendMessage(jid, {
         react: { text: '📊', key: sent.key }
     });
 }
 
-// ═══════════════════════════════════════
+// ============================================================
 // 🤖 MAIN BOT ENGINE
-// ═══════════════════════════════════════
+// ============================================================
 async function startBot() {
     // Clean up existing connection
     if (sock) {
@@ -1181,6 +1029,7 @@ async function startBot() {
         sock = null;
     }
 
+    // Import Baileys
     const baileys = await import('@whiskeysockets/baileys');
     const {
         default: makeWASocket,
@@ -1188,10 +1037,12 @@ async function startBot() {
         DisconnectReason
     } = baileys;
 
+    // Load auth state
     const { state, saveCreds } = await useMultiFileAuthState(
         path.join(__dirname, 'auth_info_baileys')
     );
 
+    // Create socket
     sock = makeWASocket({
         auth: state,
         browser: [config.botName, 'Chrome', config.version],
@@ -1199,11 +1050,12 @@ async function startBot() {
         printQRInTerminal: false
     });
 
-    // ═══════════════════════════════════════
+    // ============================================================
     // 📨 MESSAGE HANDLER
-    // ═══════════════════════════════════════
+    // ============================================================
     sock.ev.on('messages.upsert', async ({ messages }) => {
         for (const msg of messages) {
+            // Skip empty messages
             if (!msg.message) continue;
 
             const jid = msg.key.remoteJid;
@@ -1217,130 +1069,7 @@ async function startBot() {
             // Skip own messages in production
             if (msg.key.fromMe && !TEST_MODE) continue;
 
-            // ═══════════════════════════
-            // BUTTON CLICK HANDLER
-            // ═══════════════════════════
-            const btnResponse = msg.message?.interactiveResponseMessage;
-            if (btnResponse) {
-                try {
-                    const data = JSON.parse(
-                        btnResponse.nativeFlowResponseMessage?.paramsJson || '{}'
-                    );
-                    const btnId = data.id;
-                    console.log(`🔘 Button clicked: ${btnId} from ${jid}`);
-
-                    const sender = msg.key.participant || jid;
-                    const senderNum = sender.split('@')[0].replace(/[^0-9]/g, '');
-                    const isUserOwner = isOwner(senderNum, sender);
-                    const isGroup = jid.endsWith('@g.us');
-                    const isAdmin = isGroup ? await checkAdmin(jid, sender) : false;
-                    const prefix = await db.get('prefix', '.');
-
-                    const buttonActions = {
-                        'btn_news': async () => {
-                            await sock.sendMessage(jid, {
-                                text: '📰 *Fetching latest news...*\n⏳ Please wait...'
-                            });
-                            await checkAndShareAllNewNews();
-                        },
-                        'btn_menu': async () => {
-                            await sendBeautifulMenu(
-                                sock, jid, db, config,
-                                isUserOwner, isAdmin, isGroup, prefix
-                            );
-                        },
-                        'btn_settings': async () => {
-                            await sendBeautifulSettings(
-                                sock, jid, db, isUserOwner, config
-                            );
-                        },
-                        'btn_save': async () => {
-                            await sock.sendMessage(jid, {
-                                text: [
-                                    '💡 *How to Save Media*',
-                                    '',
-                                    'Reply to any media message with:',
-                                    `📌 *${prefix}save*`,
-                                    '',
-                                    beautifulFooter()
-                                ].join('\n')
-                            });
-                        },
-                        'btn_vv': async () => {
-                            await sock.sendMessage(jid, {
-                                text: [
-                                    '💡 *How to Save View-Once*',
-                                    '',
-                                    'Reply to a view-once message with:',
-                                    `📌 *${prefix}vv*`,
-                                    '',
-                                    beautifulFooter()
-                                ].join('\n')
-                            });
-                        },
-                        'btn_voice_on': async () => {
-                            await db.set('voiceReplyEnabled', true);
-                            await sock.sendMessage(jid, {
-                                text: `🎵 *Voice Replies: ${statusBadge(true)}*\n${beautifulFooter()}`
-                            });
-                        },
-                        'btn_voice_off': async () => {
-                            await db.set('voiceReplyEnabled', false);
-                            await sock.sendMessage(jid, {
-                                text: `🎵 *Voice Replies: ${statusBadge(false)}*\n${beautifulFooter()}`
-                            });
-                        },
-                        'btn_antilink_on': async () => {
-                            await db.set('antiLinkEnabled', true);
-                            await sock.sendMessage(jid, {
-                                text: `🔗 *Anti-Link: ${statusBadge(true)}*\n${beautifulFooter()}`
-                            });
-                        },
-                        'btn_mute': async () => {
-                            if (isGroup) {
-                                await db.groupSet(jid, 'isMuted', true);
-                                await sock.sendMessage(jid, {
-                                    text: `🔇 *Group Muted for 30 Minutes*\n${beautifulFooter()}`
-                                });
-                                setTimeout(() => {
-                                    db.groupSet(jid, 'isMuted', false);
-                                }, 30 * 60 * 1000);
-                            }
-                        },
-                        'btn_autostatus_on': async () => {
-                            await db.set('autoStatusView', true);
-                            await db.set('autoStatusReact', true);
-                            await sock.sendMessage(jid, {
-                                text: `🖤 *Auto Status: ${statusBadge(true)}*\n${beautifulFooter()}`
-                            });
-                        },
-                        'btn_autobio_on': async () => {
-                            await db.set('autoBioEnabled', true);
-                            await sock.sendMessage(jid, {
-                                text: `📝 *Auto Bio: ${statusBadge(true)}*\n${beautifulFooter()}`
-                            });
-                            await updateBotBio();
-                        },
-                        'btn_mode_public': async () => {
-                            await db.set('botMode', 'public');
-                            await sock.sendMessage(jid, {
-                                text: `🌍 *Mode Changed to: PUBLIC*\n${beautifulFooter()}`
-                            });
-                        }
-                    };
-
-                    if (buttonActions[btnId]) {
-                        await buttonActions[btnId]();
-                    }
-                } catch (e) {
-                    console.log('❌ Button handler error:', e.message);
-                }
-                return;
-            }
-
-            // ═══════════════════════════
-            // TEXT MESSAGE HANDLER
-            // ═══════════════════════════
+            // Get message text
             let rawText = '';
             if (msg.message.conversation) {
                 rawText = msg.message.conversation;
@@ -1354,6 +1083,7 @@ async function startBot() {
 
             if (!rawText) continue;
 
+            // Parse message
             const text = rawText.trim();
             const lower = text.toLowerCase();
             const sender = msg.key.participant || jid;
@@ -1366,7 +1096,7 @@ async function startBot() {
 
             // Log commands
             if (lower.startsWith('.') || lower.startsWith(prefix)) {
-                console.log(`📩 Command from [${senderNum}]: "${lower}"`);
+                console.log(`📩 [${senderNum}] "${lower}"`);
             }
 
             // Check bot mode access
@@ -1374,7 +1104,7 @@ async function startBot() {
                 if (lower.startsWith(prefix) || lower.startsWith('.')) {
                     const mode = await db.get('botMode', 'public');
                     await sock.sendMessage(jid, {
-                        text: `🔒 *Bot is in ${mode.toUpperCase()} Mode!*\n${beautifulFooter()}`
+                        text: '╭' + '─'.repeat(30) + '╮\n┃  🔒 *' + mode.toUpperCase() + ' Mode!*  ┃\n╰' + '─'.repeat(30) + '╯' + beautifulFooter()
                     });
                 }
                 return;
@@ -1383,155 +1113,156 @@ async function startBot() {
             // Check ban
             if (await db.banCheck(sender) && !isUserOwner) return;
 
-            // ═══════════════════════════
-            // MENU COMMANDS
-            // ═══════════════════════════
+            // ============================================================
+            // 📋 MENU COMMAND
+            // ============================================================
             if (lower === '.menu' || lower === `${prefix}menu` || lower === 'menu') {
                 const btnEnabled = await db.get('buttonMenuEnabled', true);
                 if (btnEnabled) {
-                    const sent = await sendNativeButtons(
-                        sock, jid, db, config,
-                        isUserOwner, isAdmin, prefix
-                    );
-                    if (!sent) {
-                        await sendBeautifulMenu(
-                            sock, jid, db, config,
-                            isUserOwner, isAdmin, isGroup, prefix
-                        );
-                    }
+                    await sendBeautifulMenu(sock, jid, db, config, isUserOwner, isAdmin, isGroup, prefix);
                 } else {
-                    await sendBeautifulMenu(
-                        sock, jid, db, config,
-                        isUserOwner, isAdmin, isGroup, prefix
-                    );
+                    await sendBeautifulMenu(sock, jid, db, config, isUserOwner, isAdmin, isGroup, prefix);
                 }
                 return;
             }
 
-            // ═══════════════════════════
-            // SETTINGS
-            // ═══════════════════════════
+            // ============================================================
+            // ⚙️ SETTINGS COMMAND
+            // ============================================================
             if (lower === '.settings' || lower === `${prefix}settings` || lower === 'settings') {
                 await sendBeautifulSettings(sock, jid, db, isUserOwner, config);
                 return;
             }
 
-            // ═══════════════════════════
-            // BUTTON TOGGLE
-            // ═══════════════════════════
-            if (lower === '.buttons on' || lower === `${prefix}buttons on`) {
-                if (canToggle) {
-                    await db.set('buttonMenuEnabled', true);
-                    await sock.sendMessage(jid, {
-                        text: `🔘 *Button Menu: ${statusBadge(true)}*\n${beautifulFooter()}`
-                    });
-                }
+            // ============================================================
+            // 📊 STATS COMMAND
+            // ============================================================
+            if (lower === '.stats' || lower === `${prefix}stats` || lower === 'stats') {
+                await sendBeautifulStats(sock, jid, db, config);
                 return;
             }
 
-            if (lower === '.buttons off' || lower === `${prefix}buttons off`) {
-                if (canToggle) {
-                    await db.set('buttonMenuEnabled', false);
+            // ============================================================
+            // 📰 NEWS COMMAND
+            // ============================================================
+            if (lower === '.news' || lower === `${prefix}news` || lower === 'news') {
+                if (!await db.get('autoNewsEnabled', true) && !isUserOwner) {
                     await sock.sendMessage(jid, {
-                        text: `📋 *Text Menu: ${statusBadge(true)}*\n${beautifulFooter()}`
+                        text: '❌ *News Disabled!*' + beautifulFooter()
                     });
+                    return;
                 }
+                await sock.sendMessage(jid, {
+                    text: '📰 *Fetching latest news...*\n⏳ Please wait...' + beautifulFooter()
+                });
+                await checkAndShareAllNewNews();
                 return;
             }
 
-            // ═══════════════════════════
-            // VOICE TOGGLE
-            // ═══════════════════════════
-            if (lower === '.voice on' || lower === `${prefix}voice on`) {
-                if (canToggle) {
+            // ============================================================
+            // 🎵 TOGGLE COMMANDS
+            // ============================================================
+            if (canToggle) {
+                // Voice toggle
+                if (lower === '.voice on' || lower === `${prefix}voice on`) {
                     await db.set('voiceReplyEnabled', true);
                     await sock.sendMessage(jid, {
-                        text: `🎵 *Voice Replies: ${statusBadge(true)}*\n${beautifulFooter()}`
+                        text: '🎵 *Voice: ON* ✅' + beautifulFooter()
                     });
+                    return;
                 }
-                return;
-            }
-
-            if (lower === '.voice off' || lower === `${prefix}voice off`) {
-                if (canToggle) {
+                if (lower === '.voice off' || lower === `${prefix}voice off`) {
                     await db.set('voiceReplyEnabled', false);
                     await sock.sendMessage(jid, {
-                        text: `🎵 *Voice Replies: ${statusBadge(false)}*\n${beautifulFooter()}`
+                        text: '🎵 *Voice: OFF* ❌' + beautifulFooter()
                     });
+                    return;
                 }
-                return;
+
+                // Buttons toggle
+                if (lower === '.buttons on' || lower === `${prefix}buttons on`) {
+                    await db.set('buttonMenuEnabled', true);
+                    await sock.sendMessage(jid, {
+                        text: '🔘 *Buttons: ON* ✅' + beautifulFooter()
+                    });
+                    return;
+                }
+                if (lower === '.buttons off' || lower === `${prefix}buttons off`) {
+                    await db.set('buttonMenuEnabled', false);
+                    await sock.sendMessage(jid, {
+                        text: '📋 *Text Menu: ON* ✅' + beautifulFooter()
+                    });
+                    return;
+                }
+
+                // Anti-link toggle
+                if (lower === '.antilink on' || lower === `${prefix}antilink on`) {
+                    await db.set('antiLinkEnabled', true);
+                    await sock.sendMessage(jid, {
+                        text: '🔗 *Anti-Link: ON* ✅' + beautifulFooter()
+                    });
+                    return;
+                }
+                if (lower === '.antilink off' || lower === `${prefix}antilink off`) {
+                    await db.set('antiLinkEnabled', false);
+                    await sock.sendMessage(jid, {
+                        text: '🔗 *Anti-Link: OFF* ❌' + beautifulFooter()
+                    });
+                    return;
+                }
+
+                // Welcome toggle
+                if (lower === '.welcome on' || lower === `${prefix}welcome on`) {
+                    await db.set('welcomeEnabled', true);
+                    await sock.sendMessage(jid, {
+                        text: '👋 *Welcome: ON* ✅' + beautifulFooter()
+                    });
+                    return;
+                }
+                if (lower === '.welcome off' || lower === `${prefix}welcome off`) {
+                    await db.set('welcomeEnabled', false);
+                    await sock.sendMessage(jid, {
+                        text: '👋 *Welcome: OFF* ❌' + beautifulFooter()
+                    });
+                    return;
+                }
+
+                // Goodbye toggle
+                if (lower === '.goodbye on' || lower === `${prefix}goodbye on`) {
+                    await db.set('goodbyeEnabled', true);
+                    await sock.sendMessage(jid, {
+                        text: '👋 *Goodbye: ON* ✅' + beautifulFooter()
+                    });
+                    return;
+                }
+                if (lower === '.goodbye off' || lower === `${prefix}goodbye off`) {
+                    await db.set('goodbyeEnabled', false);
+                    await sock.sendMessage(jid, {
+                        text: '👋 *Goodbye: OFF* ❌' + beautifulFooter()
+                    });
+                    return;
+                }
+
+                // Auto bio toggle
+                if (lower === '.autobio on' || lower === `${prefix}autobio on`) {
+                    await db.set('autoBioEnabled', true);
+                    await sock.sendMessage(jid, {
+                        text: '📝 *Auto Bio: ON* ✅' + beautifulFooter()
+                    });
+                    return;
+                }
+                if (lower === '.autobio off' || lower === `${prefix}autobio off`) {
+                    await db.set('autoBioEnabled', false);
+                    await sock.sendMessage(jid, {
+                        text: '📝 *Auto Bio: OFF* ❌' + beautifulFooter()
+                    });
+                    return;
+                }
             }
 
-            // ═══════════════════════════
-            // TOGGLE SWITCHES (Admin)
-            // ═══════════════════════════
-            if (canToggle) {
-                const toggleCommands = {
-                    '.antilink on': {
-                        key: 'antiLinkEnabled',
-                        message: '🔗 *Anti-Link: ON ✅*'
-                    },
-                    '.antilink off': {
-                        key: 'antiLinkEnabled',
-                        value: false,
-                        message: '🔗 *Anti-Link: OFF ❌*'
-                    },
-                    '.antiview on': {
-                        key: 'antiViewOnce',
-                        message: '🚫 *Anti View-Once: ON ✅*'
-                    },
-                    '.antiview off': {
-                        key: 'antiViewOnce',
-                        value: false,
-                        message: '👁️ *Anti View-Once: OFF ❌*'
-                    },
-                    '.welcome on': {
-                        key: 'welcomeEnabled',
-                        message: '👋 *Welcome Messages: ON ✅*'
-                    },
-                    '.welcome off': {
-                        key: 'welcomeEnabled',
-                        value: false,
-                        message: '👋 *Welcome Messages: OFF ❌*'
-                    },
-                    '.goodbye on': {
-                        key: 'goodbyeEnabled',
-                        message: '👋 *Goodbye Messages: ON ✅*'
-                    },
-                    '.goodbye off': {
-                        key: 'goodbyeEnabled',
-                        value: false,
-                        message: '👋 *Goodbye Messages: OFF ❌*'
-                    },
-                    '.autobio on': {
-                        key: 'autoBioEnabled',
-                        message: '📝 *Auto Bio: ON ✅*'
-                    },
-                    '.autobio off': {
-                        key: 'autoBioEnabled',
-                        value: false,
-                        message: '📝 *Auto Bio: OFF ❌*'
-                    }
-                };
-
-                for (const [cmd, config] of Object.entries(toggleCommands)) {
-                    const cmdWithPrefix = `${prefix}${cmd.replace('.', '')}`;
-                    if (lower === cmd || lower === cmdWithPrefix) {
-                        await db.set(
-                            config.key,
-                            config.value !== undefined ? config.value : true
-                        );
-                        await sock.sendMessage(jid, {
-                            text: `${config.message}\n${beautifulFooter()}`
-                        });
-                        return;
-                    }
-                }
-            }
-
-            // ═══════════════════════════
-            // VOICE REPLIES
-            // ═══════════════════════════
+            // ============================================================
+            // 🎤 VOICE REPLIES (DM Only)
+            // ============================================================
             if (!isGroup && !isUserOwner && await db.get('voiceReplyEnabled', true)) {
                 if (voiceClips?.replies) {
                     for (const [trigger, url] of Object.entries(voiceClips.replies)) {
@@ -1566,9 +1297,365 @@ async function startBot() {
                 }
             }
 
-            // ═══════════════════════════
-            // VIEW-ONCE SAVER
-            // ═══════════════════════════
+            // ============================================================
+            // 👑 OWNER COMMANDS
+            // ============================================================
+            if (isUserOwner) {
+                // Mode command
+                if (lower === '.mode' || lower.startsWith('.mode ') || lower === `${prefix}mode`) {
+                    const modeArg = text.replace('.mode', '').replace(`${prefix}mode`, '').trim().toLowerCase();
+                    const validModes = ['private', 'inbox', 'groups', 'public'];
+                    const modeEmoji = { private: '🔒', inbox: '📥', groups: '👥', public: '🌍' };
+
+                    if (validModes.includes(modeArg)) {
+                        await db.set('botMode', modeArg);
+                        await sock.sendMessage(jid, {
+                            text: modeEmoji[modeArg] + ' *Mode: ' + modeArg.toUpperCase() + '*\n\n' + beautifulFooter()
+                        });
+                    } else {
+                        const currentMode = await db.get('botMode', 'public');
+                        await sock.sendMessage(jid, {
+                            text: modeEmoji[currentMode] + ' *Current: ' + currentMode.toUpperCase() +
+                                  '*\n💡 .mode private/inbox/groups/public\n\n' + beautifulFooter()
+                        });
+                    }
+                    return;
+                }
+
+                // Auto status toggle
+                if (lower === '.autostatus on' || lower === `${prefix}autostatus on`) {
+                    await db.set('autoStatusView', true);
+                    await db.set('autoStatusReact', true);
+                    await sock.sendMessage(jid, {
+                        text: '🖤 *Auto Status: ON* ✅' + beautifulFooter()
+                    });
+                    return;
+                }
+                if (lower === '.autostatus off' || lower === `${prefix}autostatus off`) {
+                    await db.set('autoStatusView', false);
+                    await db.set('autoStatusReact', false);
+                    await sock.sendMessage(jid, {
+                        text: '🖤 *Auto Status: OFF* ❌' + beautifulFooter()
+                    });
+                    return;
+                }
+
+                // Auto news toggle
+                if (lower === '.autonews on' || lower === `${prefix}autonews on`) {
+                    await db.set('autoNewsEnabled', true);
+                    await sock.sendMessage(jid, {
+                        text: '📰 *Auto News: ON* ✅' + beautifulFooter()
+                    });
+                    return;
+                }
+                if (lower === '.autonews off' || lower === `${prefix}autonews off`) {
+                    await db.set('autoNewsEnabled', false);
+                    await sock.sendMessage(jid, {
+                        text: '📰 *Auto News: OFF* ❌' + beautifulFooter()
+                    });
+                    return;
+                }
+
+                // Set prefix
+                if (lower.startsWith('.setprefix ') || lower.startsWith(`${prefix}setprefix `)) {
+                    const newPrefix = text.replace('.setprefix', '').replace(`${prefix}setprefix`, '').trim();
+                    if (newPrefix.length >= 1 && newPrefix.length <= 3) {
+                        await db.set('prefix', newPrefix);
+                        await sock.sendMessage(jid, {
+                            text: '🔧 *Prefix: "' + newPrefix + '"*\n💡 Use *' + newPrefix + 'menu*\n\n' + beautifulFooter()
+                        });
+                    }
+                    return;
+                }
+
+                // Broadcast
+                if (lower.startsWith('.broadcast ') || lower.startsWith(`${prefix}broadcast `)) {
+                    const broadcastMsg = text.replace('.broadcast', '').replace(`${prefix}broadcast`, '').trim();
+                    try {
+                        const groups = await sock.groupFetchAllParticipating();
+                        let count = 0;
+                        for (const groupId of Object.keys(groups)) {
+                            try {
+                                await sock.sendMessage(groupId, {
+                                    text: '📢 *Broadcast*\n\n' + broadcastMsg + '\n\n' + beautifulFooter()
+                                });
+                                count++;
+                                await new Promise(r => setTimeout(r, 1000));
+                            } catch {}
+                        }
+                        await sock.sendMessage(jid, {
+                            text: '📢 Sent to *' + count + '* groups!' + beautifulFooter()
+                        });
+                    } catch {}
+                    return;
+                }
+
+                // Ban user
+                if (lower.startsWith('.ban ') || lower.startsWith(`${prefix}ban `)) {
+                    const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
+                    if (mentioned?.length) {
+                        await db.banAdd(mentioned[0]);
+                        await sock.sendMessage(jid, {
+                            text: '🚫 @' + mentioned[0].split('@')[0] + ' *banned!*\n\n' + beautifulFooter(),
+                            mentions: [mentioned[0]]
+                        });
+                    }
+                    return;
+                }
+
+                // Unban user
+                if (lower.startsWith('.unban ') || lower.startsWith(`${prefix}unban `)) {
+                    const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
+                    if (mentioned?.length) {
+                        await db.banRemove(mentioned[0]);
+                        await sock.sendMessage(jid, {
+                            text: '✅ @' + mentioned[0].split('@')[0] + ' *unbanned!*\n\n' + beautifulFooter(),
+                            mentions: [mentioned[0]]
+                        });
+                    }
+                    return;
+                }
+
+                // Ban list
+                if (lower === '.banlist' || lower === `${prefix}banlist`) {
+                    const bans = await db.banAll();
+                    if (!bans.length) {
+                        await sock.sendMessage(jid, {
+                            text: '✅ *No bans!*' + beautifulFooter()
+                        });
+                    } else {
+                        const banList = bans.map((b, i) => (i + 1) + '. @' + b.userId.split('@')[0]).join('\n');
+                        await sock.sendMessage(jid, {
+                            text: '🚫 *Banned (' + bans.length + ')*\n' + banList + '\n\n' + beautifulFooter(),
+                            mentions: bans.map(b => b.userId)
+                        });
+                    }
+                    return;
+                }
+            }
+
+            // ============================================================
+            // 👥 GROUP COMMANDS
+            // ============================================================
+            if (isGroup) {
+                // List admins
+                if (lower === '.admins' || lower === `${prefix}admins`) {
+                    try {
+                        const metadata = await sock.groupMetadata(jid);
+                        const admins = metadata.participants.filter(p => p.admin);
+                        const adminList = admins.map(p => '👑 @' + p.id.split('@')[0]).join('\n');
+                        const sent = await sock.sendMessage(jid, {
+                            text: '👑 *Admins*\n' + adminList + '\n\n' + beautifulFooter(),
+                            mentions: admins.map(p => p.id)
+                        });
+                        await sock.sendMessage(jid, { react: { text: '👑', key: sent.key } });
+                    } catch {}
+                    return;
+                }
+
+                // Group info
+                if (lower === '.groupinfo' || lower === `${prefix}groupinfo` || lower === '.gcinfo') {
+                    try {
+                        const metadata = await sock.groupMetadata(jid);
+                        const sent = await sock.sendMessage(jid, {
+                            text: '📋 *' + metadata.subject + '*\n👥 ' + metadata.participants.length +
+                                  '\n👑 @' + metadata.owner?.split('@')[0] + '\n\n' + beautifulFooter(),
+                            mentions: [metadata.owner]
+                        });
+                        await sock.sendMessage(jid, { react: { text: '📋', key: sent.key } });
+                    } catch {}
+                    return;
+                }
+
+                // Tag all
+                if (lower === '.tagall' || lower === `${prefix}tagall` || lower === '.everyone') {
+                    try {
+                        const metadata = await sock.groupMetadata(jid);
+                        const sent = await sock.sendMessage(jid, {
+                            text: '📢 *Everyone!*\n\n' + beautifulFooter(),
+                            mentions: metadata.participants.map(p => p.id)
+                        });
+                        await sock.sendMessage(jid, { react: { text: '📢', key: sent.key } });
+                    } catch {}
+                    return;
+                }
+
+                // Poll
+                if (lower.startsWith('.poll ') || lower.startsWith(`${prefix}poll `)) {
+                    const question = text.replace('.poll', '').replace(`${prefix}poll`, '').trim();
+                    const sent = await sock.sendMessage(jid, {
+                        poll: {
+                            name: '📊 ' + question,
+                            values: ['👍 Yes', '👎 No', '🤔 Maybe'],
+                            selectableCount: 1
+                        }
+                    });
+                    await sock.sendMessage(jid, { react: { text: '📊', key: sent.key } });
+                    return;
+                }
+
+                // AFK
+                if (lower.startsWith('.afk') || lower.startsWith(`${prefix}afk`)) {
+                    const reason = text.replace('.afk', '').replace(`${prefix}afk`, '').trim() || 'AFK';
+                    await db.afkSet(sender, reason);
+                    const sent = await sock.sendMessage(jid, {
+                        text: '💤 @' + sender.split('@')[0] + ' *AFK:* ' + reason + '\n\n' + beautifulFooter(),
+                        mentions: [sender]
+                    });
+                    await sock.sendMessage(jid, { react: { text: '💤', key: sent.key } });
+                    return;
+                }
+
+                // ============================================================
+                // 🛡️ GROUP ADMIN COMMANDS
+                // ============================================================
+                if (isAdmin || isUserOwner) {
+                    // Mute
+                    if (lower === '.mute' || lower === `${prefix}mute`) {
+                        await db.groupSet(jid, 'isMuted', true);
+                        await sock.sendMessage(jid, {
+                            text: '🔇 *Muted 30min*\n\n' + beautifulFooter()
+                        });
+                        setTimeout(() => db.groupSet(jid, 'isMuted', false), 30 * 60 * 1000);
+                        return;
+                    }
+
+                    // Unmute
+                    if (lower === '.unmute' || lower === `${prefix}unmute`) {
+                        await db.groupSet(jid, 'isMuted', false);
+                        await sock.sendMessage(jid, {
+                            text: '🔊 *Unmuted!*\n\n' + beautifulFooter()
+                        });
+                        return;
+                    }
+
+                    // Warn
+                    if (lower.startsWith('.warn ') || lower.startsWith(`${prefix}warn `)) {
+                        const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
+                        if (mentioned?.length) {
+                            const count = await db.warnAdd(mentioned[0], jid);
+                            await sock.sendMessage(jid, {
+                                text: '⚠️ @' + mentioned[0].split('@')[0] + ' (*' + count + '/3*)\n\n' + beautifulFooter(),
+                                mentions: [mentioned[0]]
+                            });
+                            if (count >= 3) {
+                                try {
+                                    await sock.groupParticipantsUpdate(jid, [mentioned[0]], 'remove');
+                                    await db.warnClear(mentioned[0], jid);
+                                } catch {}
+                            }
+                        }
+                        return;
+                    }
+
+                    // Kick
+                    if (lower.startsWith('.kick ') || lower.startsWith(`${prefix}kick `)) {
+                        const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
+                        if (mentioned?.length) {
+                            try {
+                                await sock.groupParticipantsUpdate(jid, [mentioned[0]], 'remove');
+                                await sock.sendMessage(jid, {
+                                    text: '🚫 @' + mentioned[0].split('@')[0] + ' *kicked!*\n\n' + beautifulFooter(),
+                                    mentions: [mentioned[0]]
+                                });
+                            } catch {}
+                        }
+                        return;
+                    }
+
+                    // Add
+                    if (lower.startsWith('.add ') || lower.startsWith(`${prefix}add `)) {
+                        const number = text.replace('.add', '').replace(`${prefix}add`, '').trim().replace(/[^0-9]/g, '');
+                        if (number) {
+                            try {
+                                await sock.groupParticipantsUpdate(jid, [number + '@s.whatsapp.net'], 'add');
+                                await sock.sendMessage(jid, {
+                                    text: '✅ *' + number + ' added!*\n\n' + beautifulFooter()
+                                });
+                            } catch {}
+                        }
+                        return;
+                    }
+
+                    // Promote
+                    if (lower.startsWith('.promote ') || lower.startsWith(`${prefix}promote `)) {
+                        const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
+                        if (mentioned?.length) {
+                            try {
+                                await sock.groupParticipantsUpdate(jid, [mentioned[0]], 'promote');
+                                await sock.sendMessage(jid, {
+                                    text: '👑 @' + mentioned[0].split('@')[0] + ' *promoted!*\n\n' + beautifulFooter(),
+                                    mentions: [mentioned[0]]
+                                });
+                            } catch {}
+                        }
+                        return;
+                    }
+
+                    // Demote
+                    if (lower.startsWith('.demote ') || lower.startsWith(`${prefix}demote `)) {
+                        const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
+                        if (mentioned?.length) {
+                            try {
+                                await sock.groupParticipantsUpdate(jid, [mentioned[0]], 'demote');
+                                await sock.sendMessage(jid, {
+                                    text: '⬇️ @' + mentioned[0].split('@')[0] + ' *demoted!*\n\n' + beautifulFooter(),
+                                    mentions: [mentioned[0]]
+                                });
+                            } catch {}
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // ============================================================
+            // 💾 SAVE MEDIA COMMAND
+            // ============================================================
+            if (lower === '.save' || lower === `${prefix}save` || lower === '.ss') {
+                const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
+                if (contextInfo?.quotedMessage) {
+                    const fakeMessage = {
+                        key: { remoteJid: jid, id: contextInfo.stanzaId },
+                        message: contextInfo.quotedMessage
+                    };
+                    const saved = await saveMediaToFile(fakeMessage);
+                    if (saved) {
+                        if (saved.type === 'imageMessage') {
+                            await sock.sendMessage(jid, {
+                                image: saved.buffer,
+                                caption: '💾 *Saved!*\n\n' + beautifulFooter()
+                            });
+                        } else if (saved.type === 'videoMessage') {
+                            await sock.sendMessage(jid, {
+                                video: saved.buffer,
+                                caption: '💾 *Saved!*\n\n' + beautifulFooter()
+                            });
+                        } else if (saved.type === 'stickerMessage') {
+                            await sock.sendMessage(jid, { sticker: saved.buffer });
+                        } else {
+                            await sock.sendMessage(jid, {
+                                document: saved.buffer,
+                                fileName: saved.filename,
+                                caption: '💾 *Saved!*\n\n' + beautifulFooter()
+                            });
+                        }
+                    } else {
+                        await sock.sendMessage(jid, {
+                            text: '❌ *Failed!*\n\n' + beautifulFooter()
+                        });
+                    }
+                } else {
+                    await sock.sendMessage(jid, {
+                        text: '💡 Reply to media with *' + prefix + 'save*\n\n' + beautifulFooter()
+                    });
+                }
+                return;
+            }
+
+            // ============================================================
+            // 👁️ VIEW-ONCE SAVER
+            // ============================================================
             if (lower === '.vv' || lower === `${prefix}vv` || lower === 'vv') {
                 const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
                 if (
@@ -1583,17 +1670,9 @@ async function startBot() {
                         },
                         message: contextInfo.quotedMessage
                     };
-
                     const saved = await saveMediaToFile(fakeMessage, VV_FOLDER);
-
                     if (saved && ownerJid) {
-                        const caption = [
-                            `📱 *View-Once Saved!*`,
-                            `👤 @${sender.split('@')[0]}`,
-                            '',
-                            beautifulFooter()
-                        ].join('\n');
-
+                        const caption = '📱 *VV Saved!*\n👤 @' + sender.split('@')[0] + '\n\n' + beautifulFooter();
                         try {
                             if (saved.type === 'imageMessage') {
                                 await sock.sendMessage(ownerJid, {
@@ -1608,638 +1687,22 @@ async function startBot() {
                                     mentions: [sender]
                                 });
                             }
-                        } catch (e) {
-                            // Silent fail
-                        }
+                        } catch (e) {}
                     }
-
                     await sock.sendMessage(jid, {
-                        text: saved
-                            ? `✅ *View-Once Saved!* 📥\n${beautifulFooter()}`
-                            : `❌ *Failed to Save!*\n${beautifulFooter()}`
+                        text: saved ? '✅ *Saved!* 📥\n\n' + beautifulFooter() : '❌ *Failed!*\n\n' + beautifulFooter()
                     });
                 } else {
                     await sock.sendMessage(jid, {
-                        text: [
-                            '💡 *How to Use View-Once Saver*',
-                            '',
-                            '📌 Reply to a view-once message with:',
-                            `   *${prefix}vv*`,
-                            '',
-                            beautifulFooter()
-                        ].join('\n')
+                        text: '💡 Reply to VV with *' + prefix + 'vv*\n\n' + beautifulFooter()
                     });
                 }
                 return;
             }
 
-            // ═══════════════════════════
-            // MODE COMMAND (Owner)
-            // ═══════════════════════════
-            if (isUserOwner && (lower === '.mode' || lower.startsWith('.mode ') || lower === `${prefix}mode`)) {
-                const modeArg = text
-                    .replace('.mode', '')
-                    .replace(`${prefix}mode`, '')
-                    .trim()
-                    .toLowerCase();
-
-                const validModes = ['private', 'inbox', 'groups', 'public'];
-                const modeEmojis = {
-                    private: '🔒',
-                    inbox: '📥',
-                    groups: '👥',
-                    public: '🌍'
-                };
-
-                if (validModes.includes(modeArg)) {
-                    await db.set('botMode', modeArg);
-                    await sock.sendMessage(jid, {
-                        text: [
-                            `${modeEmojis[modeArg]} *Mode Changed!*`,
-                            `📌 New Mode: *${modeArg.toUpperCase()}*`,
-                            '',
-                            beautifulFooter()
-                        ].join('\n')
-                    });
-                } else {
-                    const currentMode = await db.get('botMode', 'public');
-                    await sock.sendMessage(jid, {
-                        text: [
-                            `${modeEmojis[currentMode]} *Current Mode: ${currentMode.toUpperCase()}*`,
-                            '',
-                            '💡 Usage: .mode [private|inbox|groups|public]',
-                            '',
-                            '🔒 Private  ─ Bot disabled',
-                            '📥 Inbox    ─ DMs only',
-                            '👥 Groups   ─ Groups only',
-                            '🌍 Public   ─ All chats',
-                            '',
-                            beautifulFooter()
-                        ].join('\n')
-                    });
-                }
-                return;
-            }
-
-            // ═══════════════════════════
-            // OWNER COMMANDS
-            // ═══════════════════════════
-            if (isUserOwner) {
-                // Auto Status
-                if (lower === '.autostatus on' || lower === `${prefix}autostatus on`) {
-                    await db.set('autoStatusView', true);
-                    await db.set('autoStatusReact', true);
-                    await sock.sendMessage(jid, {
-                        text: `🖤 *Auto Status: ${statusBadge(true)}*\n${beautifulFooter()}`
-                    });
-                    return;
-                }
-                if (lower === '.autostatus off' || lower === `${prefix}autostatus off`) {
-                    await db.set('autoStatusView', false);
-                    await db.set('autoStatusReact', false);
-                    await sock.sendMessage(jid, {
-                        text: `🖤 *Auto Status: ${statusBadge(false)}*\n${beautifulFooter()}`
-                    });
-                    return;
-                }
-
-                // Auto News
-                if (lower === '.autonews on' || lower === `${prefix}autonews on`) {
-                    await db.set('autoNewsEnabled', true);
-                    await sock.sendMessage(jid, {
-                        text: `📰 *Auto News: ${statusBadge(true)}*\n${beautifulFooter()}`
-                    });
-                    return;
-                }
-                if (lower === '.autonews off' || lower === `${prefix}autonews off`) {
-                    await db.set('autoNewsEnabled', false);
-                    await sock.sendMessage(jid, {
-                        text: `📰 *Auto News: ${statusBadge(false)}*\n${beautifulFooter()}`
-                    });
-                    return;
-                }
-
-                // Set Prefix
-                if (lower.startsWith('.setprefix ') || lower.startsWith(`${prefix}setprefix `)) {
-                    const newPrefix = text
-                        .replace('.setprefix', '')
-                        .replace(`${prefix}setprefix`, '')
-                        .trim();
-
-                    if (newPrefix.length >= 1 && newPrefix.length <= 3) {
-                        await db.set('prefix', newPrefix);
-                        await sock.sendMessage(jid, {
-                            text: [
-                                `🔧 *Prefix Updated!*`,
-                                `📌 New Prefix: *"${newPrefix}"*`,
-                                `💡 Use *${newPrefix}menu* to test`,
-                                '',
-                                beautifulFooter()
-                            ].join('\n')
-                        });
-                    } else {
-                        await sock.sendMessage(jid, {
-                            text: `❌ *Invalid prefix!* Use 1-3 characters.\n${beautifulFooter()}`
-                        });
-                    }
-                    return;
-                }
-
-                // Broadcast
-                if (lower.startsWith('.broadcast ') || lower.startsWith(`${prefix}broadcast `)) {
-                    const broadcastMsg = text
-                        .replace('.broadcast', '')
-                        .replace(`${prefix}broadcast`, '')
-                        .trim();
-
-                    try {
-                        const groups = await sock.groupFetchAllParticipating();
-                        let count = 0;
-
-                        for (const groupId of Object.keys(groups)) {
-                            try {
-                                await sock.sendMessage(groupId, {
-                                    text: [
-                                        `📢 *Broadcast Message*`,
-                                        '',
-                                        broadcastMsg,
-                                        '',
-                                        beautifulFooter()
-                                    ].join('\n')
-                                });
-                                count++;
-                                await new Promise(r => setTimeout(r, 1000));
-                            } catch {
-                                // Skip failed groups
-                            }
-                        }
-
-                        await sock.sendMessage(jid, {
-                            text: `📢 *Broadcast Sent!*\n✅ Delivered to *${count}* groups\n${beautifulFooter()}`
-                        });
-                    } catch (e) {
-                        await sock.sendMessage(jid, {
-                            text: `❌ *Broadcast Failed!*\n${beautifulFooter()}`
-                        });
-                    }
-                    return;
-                }
-
-                // Ban
-                if (lower.startsWith('.ban ') || lower.startsWith(`${prefix}ban `)) {
-                    const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
-                    if (mentioned?.length) {
-                        await db.banAdd(mentioned[0]);
-                        await sock.sendMessage(jid, {
-                            text: `🚫 *User Banned!*\n👤 @${mentioned[0].split('@')[0]}\n${beautifulFooter()}`,
-                            mentions: [mentioned[0]]
-                        });
-                    }
-                    return;
-                }
-
-                // Unban
-                if (lower.startsWith('.unban ') || lower.startsWith(`${prefix}unban `)) {
-                    const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
-                    if (mentioned?.length) {
-                        await db.banRemove(mentioned[0]);
-                        await sock.sendMessage(jid, {
-                            text: `✅ *User Unbanned!*\n👤 @${mentioned[0].split('@')[0]}\n${beautifulFooter()}`,
-                            mentions: [mentioned[0]]
-                        });
-                    }
-                    return;
-                }
-
-                // Ban List
-                if (lower === '.banlist' || lower === `${prefix}banlist`) {
-                    const bans = await db.banAll();
-                    if (!bans.length) {
-                        await sock.sendMessage(jid, {
-                            text: `✅ *No Banned Users!*\n${beautifulFooter()}`
-                        });
-                    } else {
-                        const banList = bans.map((ban, index) =>
-                            `${index + 1}. @${ban.userId.split('@')[0]}`
-                        ).join('\n');
-
-                        await sock.sendMessage(jid, {
-                            text: [
-                                `🚫 *Banned Users (${bans.length})*`,
-                                '',
-                                banList,
-                                '',
-                                beautifulFooter()
-                            ].join('\n'),
-                            mentions: bans.map(b => b.userId)
-                        });
-                    }
-                    return;
-                }
-
-                // Clear Warnings
-                if (lower.startsWith('.clearwarns ') || lower.startsWith(`${prefix}clearwarns `)) {
-                    const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
-                    if (mentioned?.length) {
-                        await db.warnClear(mentioned[0], jid);
-                        await sock.sendMessage(jid, {
-                            text: `✅ *Warnings Cleared!*\n👤 @${mentioned[0].split('@')[0]}\n${beautifulFooter()}`,
-                            mentions: [mentioned[0]]
-                        });
-                    }
-                    return;
-                }
-            }
-
-            // ═══════════════════════════
-            // GROUP COMMANDS
-            // ═══════════════════════════
-            if (isGroup) {
-                // List Admins
-                if (lower === '.admins' || lower === `${prefix}admins`) {
-                    try {
-                        const metadata = await sock.groupMetadata(jid);
-                        const admins = metadata.participants.filter(p => p.admin);
-                        const adminList = admins.map(p =>
-                            `👑 @${p.id.split('@')[0]}`
-                        ).join('\n');
-
-                        const sent = await sock.sendMessage(jid, {
-                            text: [
-                                `👑 *Group Admins*`,
-                                '',
-                                adminList,
-                                '',
-                                beautifulFooter()
-                            ].join('\n'),
-                            mentions: admins.map(p => p.id)
-                        });
-                        await sock.sendMessage(jid, {
-                            react: { text: '👑', key: sent.key }
-                        });
-                    } catch (e) {
-                        // Silent fail
-                    }
-                    return;
-                }
-
-                // Group Info
-                if (lower === '.groupinfo' || lower === `${prefix}groupinfo` || lower === '.gcinfo') {
-                    try {
-                        const metadata = await sock.groupMetadata(jid);
-                        const sent = await sock.sendMessage(jid, {
-                            text: [
-                                `📋 *Group Information*`,
-                                '',
-                                `📌 *Name:* ${metadata.subject}`,
-                                `👥 *Members:* ${metadata.participants.length}`,
-                                `👑 *Owner:* @${metadata.owner?.split('@')[0]}`,
-                                `📅 *Created:* ${new Date(metadata.creation * 1000).toLocaleDateString()}`,
-                                '',
-                                beautifulFooter()
-                            ].join('\n'),
-                            mentions: [metadata.owner]
-                        });
-                        await sock.sendMessage(jid, {
-                            react: { text: '📋', key: sent.key }
-                        });
-                    } catch (e) {
-                        // Silent fail
-                    }
-                    return;
-                }
-
-                // Tag All
-                if (lower === '.tagall' || lower === `${prefix}tagall` || lower === '.everyone') {
-                    try {
-                        const metadata = await sock.groupMetadata(jid);
-                        const sent = await sock.sendMessage(jid, {
-                            text: [
-                                `📢 *Attention Everyone!*`,
-                                '',
-                                beautifulFooter()
-                            ].join('\n'),
-                            mentions: metadata.participants.map(p => p.id)
-                        });
-                        await sock.sendMessage(jid, {
-                            react: { text: '📢', key: sent.key }
-                        });
-                    } catch (e) {
-                        // Silent fail
-                    }
-                    return;
-                }
-
-                // Poll
-                if (lower.startsWith('.poll ') || lower.startsWith(`${prefix}poll `)) {
-                    const pollQuestion = text
-                        .replace('.poll', '')
-                        .replace(`${prefix}poll`, '')
-                        .trim();
-
-                    const sent = await sock.sendMessage(jid, {
-                        poll: {
-                            name: `📊 ${pollQuestion}`,
-                            values: ['👍 Yes', '👎 No', '🤔 Maybe'],
-                            selectableCount: 1
-                        }
-                    });
-                    await sock.sendMessage(jid, {
-                        react: { text: '📊', key: sent.key }
-                    });
-                    return;
-                }
-
-                // AFK
-                if (lower.startsWith('.afk') || lower.startsWith(`${prefix}afk`)) {
-                    const reason = text
-                        .replace('.afk', '')
-                        .replace(`${prefix}afk`, '')
-                        .trim() || 'No reason';
-
-                    await db.afkSet(sender, reason);
-                    const sent = await sock.sendMessage(jid, {
-                        text: [
-                            `💤 *AFK Mode Activated*`,
-                            `👤 @${sender.split('@')[0]}`,
-                            `📝 ${reason}`,
-                            '',
-                            beautifulFooter()
-                        ].join('\n'),
-                        mentions: [sender]
-                    });
-                    await sock.sendMessage(jid, {
-                        react: { text: '💤', key: sent.key }
-                    });
-                    return;
-                }
-
-                // ═══════════════════════════
-                // ADMIN COMMANDS
-                // ═══════════════════════════
-                if (isAdmin || isUserOwner) {
-                    // Mute
-                    if (lower === '.mute' || lower === `${prefix}mute`) {
-                        await db.groupSet(jid, 'isMuted', true);
-                        await sock.sendMessage(jid, {
-                            text: `🔇 *Group Muted for 30 Minutes*\n${beautifulFooter()}`
-                        });
-                        setTimeout(() => {
-                            db.groupSet(jid, 'isMuted', false);
-                        }, 30 * 60 * 1000);
-                        return;
-                    }
-
-                    // Unmute
-                    if (lower === '.unmute' || lower === `${prefix}unmute`) {
-                        await db.groupSet(jid, 'isMuted', false);
-                        await sock.sendMessage(jid, {
-                            text: `🔊 *Group Unmuted!*\n${beautifulFooter()}`
-                        });
-                        return;
-                    }
-
-                    // Warn
-                    if (lower.startsWith('.warn ') || lower.startsWith(`${prefix}warn `)) {
-                        const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
-                        if (mentioned?.length) {
-                            const count = await db.warnAdd(mentioned[0], jid);
-                            await sock.sendMessage(jid, {
-                                text: `⚠️ *Warning ${count}/3*\n👤 @${mentioned[0].split('@')[0]}\n${beautifulFooter()}`,
-                                mentions: [mentioned[0]]
-                            });
-
-                            // Auto kick at 3 warnings
-                            if (count >= 3) {
-                                try {
-                                    await sock.groupParticipantsUpdate(
-                                        jid,
-                                        [mentioned[0]],
-                                        'remove'
-                                    );
-                                    await db.warnClear(mentioned[0], jid);
-                                    await sock.sendMessage(jid, {
-                                        text: `🚫 *User Kicked!*\n👤 @${mentioned[0].split('@')[0]}\n⚠️ Reached 3 warnings\n${beautifulFooter()}`,
-                                        mentions: [mentioned[0]]
-                                    });
-                                } catch (e) {
-                                    // Silent fail
-                                }
-                            }
-                        }
-                        return;
-                    }
-
-                    // Kick
-                    if (lower.startsWith('.kick ') || lower.startsWith(`${prefix}kick `)) {
-                        const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
-                        if (mentioned?.length) {
-                            try {
-                                await sock.groupParticipantsUpdate(
-                                    jid,
-                                    [mentioned[0]],
-                                    'remove'
-                                );
-                                await sock.sendMessage(jid, {
-                                    text: `🚫 *User Removed!*\n👤 @${mentioned[0].split('@')[0]}\n${beautifulFooter()}`,
-                                    mentions: [mentioned[0]]
-                                });
-                            } catch (e) {
-                                await sock.sendMessage(jid, {
-                                    text: `❌ *Failed to Remove User!*\n${beautifulFooter()}`
-                                });
-                            }
-                        }
-                        return;
-                    }
-
-                    // Add
-                    if (lower.startsWith('.add ') || lower.startsWith(`${prefix}add `)) {
-                        const number = text
-                            .replace('.add', '')
-                            .replace(`${prefix}add`, '')
-                            .trim()
-                            .replace(/[^0-9]/g, '');
-
-                        if (number) {
-                            try {
-                                await sock.groupParticipantsUpdate(
-                                    jid,
-                                    [`${number}@s.whatsapp.net`],
-                                    'add'
-                                );
-                                await sock.sendMessage(jid, {
-                                    text: `✅ *User Added!*\n👤 ${number}\n${beautifulFooter()}`
-                                });
-                            } catch (e) {
-                                await sock.sendMessage(jid, {
-                                    text: `❌ *Failed to Add User!*\n${beautifulFooter()}`
-                                });
-                            }
-                        }
-                        return;
-                    }
-
-                    // Promote
-                    if (lower.startsWith('.promote ') || lower.startsWith(`${prefix}promote `)) {
-                        const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
-                        if (mentioned?.length) {
-                            try {
-                                await sock.groupParticipantsUpdate(
-                                    jid,
-                                    [mentioned[0]],
-                                    'promote'
-                                );
-                                await sock.sendMessage(jid, {
-                                    text: `👑 *Promoted to Admin!*\n👤 @${mentioned[0].split('@')[0]}\n${beautifulFooter()}`,
-                                    mentions: [mentioned[0]]
-                                });
-                            } catch (e) {
-                                await sock.sendMessage(jid, {
-                                    text: `❌ *Failed to Promote!*\n${beautifulFooter()}`
-                                });
-                            }
-                        }
-                        return;
-                    }
-
-                    // Demote
-                    if (lower.startsWith('.demote ') || lower.startsWith(`${prefix}demote `)) {
-                        const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
-                        if (mentioned?.length) {
-                            try {
-                                await sock.groupParticipantsUpdate(
-                                    jid,
-                                    [mentioned[0]],
-                                    'demote'
-                                );
-                                await sock.sendMessage(jid, {
-                                    text: `⬇️ *Admin Demoted!*\n👤 @${mentioned[0].split('@')[0]}\n${beautifulFooter()}`,
-                                    mentions: [mentioned[0]]
-                                });
-                            } catch (e) {
-                                await sock.sendMessage(jid, {
-                                    text: `❌ *Failed to Demote!*\n${beautifulFooter()}`
-                                });
-                            }
-                        }
-                        return;
-                    }
-                }
-            }
-
-            // ═══════════════════════════
-            // NEWS COMMAND
-            // ═══════════════════════════
-            if (lower === '.news' || lower === `${prefix}news` || lower === 'news') {
-                if (!await db.get('autoNewsEnabled', true) && !isUserOwner) {
-                    await sock.sendMessage(jid, {
-                        text: `❌ *News Feature Disabled!*\n${beautifulFooter()}`
-                    });
-                    return;
-                }
-
-                await sock.sendMessage(jid, {
-                    text: `📰 *Fetching Latest News...*\n⏳ Please wait...\n${beautifulFooter()}`
-                });
-                await checkAndShareAllNewNews();
-                return;
-            }
-
-            // ═══════════════════════════
-            // STATS COMMAND
-            // ═══════════════════════════
-            if (lower === '.stats' || lower === `${prefix}stats` || lower === 'stats') {
-                await sendBeautifulStats(sock, jid, db, config);
-                return;
-            }
-
-            // ═══════════════════════════
-            // STATUS INFO
-            // ═══════════════════════════
-            if (lower === '.status' || lower === `${prefix}status` || lower === '.vs') {
-                const settings = await db.all();
-                const statusText = [
-                    `📱 *Status Saver Information*`,
-                    '',
-                    `👁️ Auto View: ${statusBadge(settings.autoStatusView)}`,
-                    `💬 Auto React: ${statusBadge(settings.autoStatusReact)}`,
-                    `📵 Forward: DISABLED`,
-                    `📂 Statuses Saved: *${fs.readdirSync(STATUS_FOLDER).length}*`,
-                    '',
-                    beautifulFooter()
-                ].join('\n');
-
-                const sent = await sock.sendMessage(jid, { text: statusText });
-                await sock.sendMessage(jid, {
-                    react: { text: '📱', key: sent.key }
-                });
-                return;
-            }
-
-            // ═══════════════════════════
-            // SAVE MEDIA COMMAND
-            // ═══════════════════════════
-            if (lower === '.save' || lower === `${prefix}save` || lower === '.ss') {
-                const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
-                if (contextInfo?.quotedMessage) {
-                    const fakeMessage = {
-                        key: {
-                            remoteJid: jid,
-                            id: contextInfo.stanzaId
-                        },
-                        message: contextInfo.quotedMessage
-                    };
-
-                    const saved = await saveMediaToFile(fakeMessage);
-
-                    if (saved) {
-                        if (saved.type === 'imageMessage') {
-                            await sock.sendMessage(jid, {
-                                image: saved.buffer,
-                                caption: `💾 *Media Saved!*\n${beautifulFooter()}`
-                            });
-                        } else if (saved.type === 'videoMessage') {
-                            await sock.sendMessage(jid, {
-                                video: saved.buffer,
-                                caption: `💾 *Media Saved!*\n${beautifulFooter()}`
-                            });
-                        } else if (saved.type === 'stickerMessage') {
-                            await sock.sendMessage(jid, {
-                                sticker: saved.buffer
-                            });
-                        } else {
-                            await sock.sendMessage(jid, {
-                                document: saved.buffer,
-                                fileName: saved.filename,
-                                caption: `💾 *Media Saved!*\n${beautifulFooter()}`
-                            });
-                        }
-                    } else {
-                        await sock.sendMessage(jid, {
-                            text: `❌ *Failed to Save Media!*\n${beautifulFooter()}`
-                        });
-                    }
-                } else {
-                    await sock.sendMessage(jid, {
-                        text: [
-                            '💡 *How to Save Media*',
-                            '',
-                            '📌 Reply to any media message with:',
-                            `   *${prefix}save*`,
-                            '',
-                            '🖼️ Images | 🎥 Videos | 🎵 Audio | 🎨 Stickers',
-                            '',
-                            beautifulFooter()
-                        ].join('\n')
-                    });
-                }
-                return;
-            }
-
-            // ═══════════════════════════
-            // ANTI-LINK DETECTION
-            // ═══════════════════════════
+            // ============================================================
+            // 🔗 ANTI-LINK DETECTION
+            // ============================================================
             if (
                 isGroup &&
                 await db.get('antiLinkEnabled', false) &&
@@ -2249,19 +1712,17 @@ async function startBot() {
             ) {
                 try {
                     await sock.sendMessage(jid, { delete: msg.key });
-                } catch (e) {
-                    // Silent fail
-                }
+                } catch (e) {}
                 await sock.sendMessage(jid, {
-                    text: `🔗 *Link Detected & Deleted!*\n👤 @${sender.split('@')[0]}\n⚠️ Sharing links is not allowed!\n${beautifulFooter()}`,
+                    text: '🔗 *Link Deleted!*\n👤 @' + sender.split('@')[0] + '\n\n' + beautifulFooter(),
                     mentions: [sender]
                 });
                 return;
             }
 
-            // ═══════════════════════════
-            // AFK DETECTION
-            // ═══════════════════════════
+            // ============================================================
+            // 💤 AFK DETECTION
+            // ============================================================
             if (msg.message?.extendedTextMessage?.contextInfo?.mentionedJid) {
                 for (const mentioned of msg.message.extendedTextMessage.contextInfo.mentionedJid) {
                     const afkData = await db.afkGet(mentioned);
@@ -2270,21 +1731,15 @@ async function startBot() {
                             (Date.now() - new Date(afkData.afkAt).getTime()) / 60000
                         );
                         await sock.sendMessage(jid, {
-                            text: [
-                                `💤 *User is AFK*`,
-                                `👤 @${mentioned.split('@')[0]}`,
-                                `📝 ${afkData.reason}`,
-                                `⏰ ${minutes} minutes ago`,
-                                '',
-                                beautifulFooter()
-                            ].join('\n'),
+                            text: '💤 @' + mentioned.split('@')[0] + ' *AFK:* ' + afkData.reason +
+                                  ' (' + minutes + 'm)\n\n' + beautifulFooter(),
                             mentions: [mentioned]
                         });
                     }
                 }
             }
 
-            // Auto-remove AFK when user sends a message
+            // Auto-remove AFK when user sends message
             if (
                 await db.afkGet(sender) &&
                 !lower.startsWith('.afk') &&
@@ -2295,60 +1750,44 @@ async function startBot() {
         }
     });
 
-    // ═══════════════════════════════════════
+    // ============================================================
     // 👥 GROUP PARTICIPANT UPDATES
-    // ═══════════════════════════════════════
+    // ============================================================
     sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
-        // Welcome Message
+        // Welcome message
         if (action === 'add' && await db.get('welcomeEnabled', false)) {
-            const welcomeMsg = await db.get(
-                'welcomeMessage',
-                '👋 Welcome to the group @user! 🎉'
-            );
-
+            const welcomeMsg = await db.get('welcomeMessage', '👋 Welcome @user! 🎉');
             for (const participant of participants) {
                 await sock.sendMessage(id, {
-                    text: [
-                        `🎉 *Welcome!*`,
-                        '',
-                        welcomeMsg.replace('@user', `@${participant.split('@')[0]}`),
-                        '',
-                        beautifulFooter()
-                    ].join('\n'),
+                    text: '🎉 *Welcome!*\n\n' +
+                          welcomeMsg.replace('@user', '@' + participant.split('@')[0]) +
+                          '\n\n' + beautifulFooter(),
                     mentions: [participant]
                 });
             }
         }
 
-        // Goodbye Message
+        // Goodbye message
         if (action === 'remove' && await db.get('goodbyeEnabled', false)) {
-            const goodbyeMsg = await db.get(
-                'goodbyeMessage',
-                '👋 @user has left the group! 😢'
-            );
-
+            const goodbyeMsg = await db.get('goodbyeMessage', '👋 Goodbye @user! 😢');
             for (const participant of participants) {
                 await sock.sendMessage(id, {
-                    text: [
-                        `😢 *Goodbye!*`,
-                        '',
-                        goodbyeMsg.replace('@user', `@${participant.split('@')[0]}`),
-                        '',
-                        beautifulFooter()
-                    ].join('\n'),
+                    text: '😢 *Goodbye!*\n\n' +
+                          goodbyeMsg.replace('@user', '@' + participant.split('@')[0]) +
+                          '\n\n' + beautifulFooter(),
                     mentions: [participant]
                 });
             }
         }
     });
 
-    // ═══════════════════════════════════════
+    // ============================================================
     // 🔌 CONNECTION UPDATES
-    // ═══════════════════════════════════════
+    // ============================================================
     sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
         // Show QR code
         if (qr) {
-            console.log('\n📱 Scan QR Code to Connect:\n');
+            console.log('\n📱 Scan QR Code:\n');
             qrcode.generate(qr, { small: true });
         }
 
@@ -2358,18 +1797,15 @@ async function startBot() {
             sock = null;
 
             const statusCode = lastDisconnect?.error?.output?.statusCode;
-
             if (statusCode !== DisconnectReason.loggedOut && !isShuttingDown) {
                 reconnectAttempts++;
                 console.log(`\n🔄 Reconnecting... Attempt ${reconnectAttempts}\n`);
-
-                const delay = Math.min(30000, 5000 * reconnectAttempts);
                 reconnectTimer = setTimeout(async () => {
                     reconnectTimer = null;
                     await startBot();
-                }, delay);
+                }, Math.min(30000, 5000 * reconnectAttempts));
             } else {
-                console.log('\n❌ Logged out! Please re-authenticate.\n');
+                console.log('\n❌ Logged out!\n');
             }
         }
 
@@ -2382,47 +1818,18 @@ async function startBot() {
                 ownerJid = sock.user.id.replace(/:.*/, '') + '@s.whatsapp.net';
             }
 
+            // Beautiful startup console
             console.log('\n' + '═'.repeat(50));
-            console.log('  💝 NewsBot LK - Connected Successfully! 💝');
+            console.log('  💝 NewsBot LK - Connected! 💝');
             console.log('═'.repeat(50));
             console.log(`  👑 Owner: ${ownerJid}`);
-            console.log(`  🗄️ Database: ${useJsonFallback ? 'JSON File' : 'MongoDB'}`);
-            console.log(`  🦄 Version: ${config.version}`);
+            console.log(`  🗄️ DB: ${useJsonFallback ? 'JSON' : 'MongoDB'}`);
+            console.log(`  🦄 v${config.version}`);
             console.log('═'.repeat(50) + '\n');
 
-            // Send beautiful connected message to owner
+            // Send connected message to owner
             if (ownerJid) {
-                try {
-                    await sock.sendMessage(ownerJid, {
-                        image: { url: BOT_LOGO },
-                        caption: [
-                            beautifulHeader(config.botName),
-                            '',
-                            `✨ *Bot Successfully Connected!* ✨`,
-                            '',
-                            `${EMOJIS.check} *Status: Online*`,
-                            `${EMOJIS.heart} *Status React: ${statusBadge(await db.get('autoStatusReact', true))}*`,
-                            `${EMOJIS.menu} *.menu: Show Menu*`,
-                            `${EMOJIS.settings} *.settings: Settings*`,
-                            '',
-                            `🔘 *Button Menu: ${statusBadge(await db.get('buttonMenuEnabled', true))}*`,
-                            '',
-                            '━'.repeat(30),
-                            '',
-                            `🦄💝 *\`NewsBot LK\`* 💝🦄`,
-                            `💝 *\`Charuka Mahesh\`* 💝`,
-                            '',
-                            `💝 *\`Dedicated to:\`*`,
-                            `🌸 Umesha Sathyanjali`,
-                            `🌸 Mithila`,
-                            `🌸 Sharada`,
-                            ''
-                        ].join('\n'),
-                        mimetype: 'image/png'
-                    });
-                } catch (e) {
-                    console.error('❌ Failed to send connected message');
-                }
+                await sendConnectedMessage();
             }
 
             // Initial news fetch
@@ -2430,43 +1837,72 @@ async function startBot() {
                 await checkAndShareAllNewNews();
             }
 
-            // Update bio after delay
+            // Update bio
             setTimeout(async () => {
                 await updateBotBio();
             }, 5000);
         }
     });
 
-    // Save credentials on update
+    // Save credentials
     sock.ev.on('creds.update', saveCreds);
 }
 
-// ═══════════════════════════════════════
-// 📰 NEWS SCRAPER
-// ═══════════════════════════════════════
+// ============================================================
+// 💝 CONNECTED MESSAGE
+// ============================================================
+async function sendConnectedMessage() {
+    if (!ownerJid) return;
 
-// Scrape article details
+    const msg = [
+        '╔' + '═'.repeat(40) + '╗',
+        '║     💝 *NewsBot LK* 💝        ║',
+        '║  🦄 ✨ *Successfully* ✨ 🦄    ║',
+        '║      *Connected!*             ║',
+        '╚' + '═'.repeat(40) + '╝',
+        '',
+        '┌' + '─'.repeat(36) + '┐',
+        '│  ✅ *Status:* Online          │',
+        '│  🖤 *Status React:* ' + statusBadge(await db.get('autoStatusReact', true)) + '      │',
+        '│  📋 *.menu:* Show Menu        │',
+        '│  ⚙️ *.settings:* Settings     │',
+        '│  🔘 *Buttons:* ' + statusBadge(await db.get('buttonMenuEnabled', true)) + '          │',
+        '└' + '─'.repeat(36) + '┘',
+        '',
+        beautifulFooter()
+    ].join('\n');
+
+    try {
+        await sock.sendMessage(ownerJid, {
+            image: { url: BOT_LOGO },
+            caption: msg,
+            mimetype: 'image/png'
+        });
+    } catch (e) {}
+}
+
+// ============================================================
+// 📰 NEWS SYSTEM
+// ============================================================
+
+/**
+ * Scrape article details from URL
+ */
 async function scrapeArticle(url) {
     try {
         const { data: html } = await axios.get(url, {
             timeout: 15000,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (compatible; NewsBot/1.0)'
-            }
+            headers: { 'User-Agent': 'Mozilla/5.0' }
         });
 
-        if (!html) {
-            return { description: '', image: '' };
-        }
+        if (!html) return { description: '', image: '' };
 
         // Extract OG image
         let image = '';
         const ogMatch = html.match(
             /<meta[^>]*property="og:image"[^>]*content="([^"]*)"[^>]*>/i
         );
-        if (ogMatch?.[1]) {
-            image = ogMatch[1];
-        }
+        if (ogMatch?.[1]) image = ogMatch[1];
 
         // Clean HTML
         const cleanHtml = html
@@ -2474,14 +1910,14 @@ async function scrapeArticle(url) {
             .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
             .replace(/<!--[\s\S]*?-->/g, '');
 
-        // Extract article content
+        // Extract content
         let description = '';
-        const articlePatterns = [
+        const patterns = [
             /<div[^>]*class="[^"]*news-content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
             /<article[^>]*>([\s\S]*?)<\/article>/i
         ];
 
-        for (const pattern of articlePatterns) {
+        for (const pattern of patterns) {
             const match = cleanHtml.match(pattern);
             if (match?.[1]) {
                 const paragraphs = match[1].match(/<p[^>]*>([\s\S]*?)<\/p>/gi);
@@ -2490,13 +1926,11 @@ async function scrapeArticle(url) {
                         .map(p => p.replace(/<[^>]*>/g, '').trim())
                         .filter(p => p.length > 30)
                         .join('\n\n');
-
                     if (description.length > 200) break;
                 }
             }
         }
 
-        // Fallback: extract all paragraphs
         if (!description) {
             const allParagraphs = cleanHtml.match(/<p[^>]*>([\s\S]*?)<\/p>/gi);
             if (allParagraphs) {
@@ -2516,7 +1950,9 @@ async function scrapeArticle(url) {
     }
 }
 
-// Fetch Hiru News
+/**
+ * Fetch Hiru News
+ */
 async function fetchHiruNews() {
     const hiru = new Hiru();
     const categories = ['BreakingNews', 'MainNews', 'TrendingNews'];
@@ -2525,7 +1961,6 @@ async function fetchHiruNews() {
 
     for (const category of categories) {
         if (typeof hiru[category] !== 'function') continue;
-
         try {
             const result = await hiru[category]();
             const url = result?.results?.newsURL;
@@ -2543,38 +1978,29 @@ async function fetchHiruNews() {
                     date: result.results.date || ''
                 });
             }
-        } catch (e) {
-            // Skip failed categories
-        }
+        } catch (e) {}
     }
-
     return newsItems;
 }
 
-// Fetch Derana News
+/**
+ * Fetch Derana News
+ */
 async function fetchDeranaNews() {
     const newsItems = [];
-
     try {
         const results = await Derana.scrapeHotNews();
-
         if (Array.isArray(results)) {
             for (const article of results.slice(0, 3)) {
                 const url = article.url || '';
                 const title = article.title || '';
-
                 if (url && title) {
                     const { description, image } = await scrapeArticle(url);
                     let desc = description;
-
                     if (!desc || desc.length < 100) {
                         desc = article.content || article.description || title;
-                        desc = String(desc)
-                            .replace(/<[^>]*>/g, '')
-                            .replace(/\s+/g, ' ')
-                            .trim();
+                        desc = String(desc).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
                     }
-
                     newsItems.push({
                         source: '🔴 Derana',
                         category: 'Hot News',
@@ -2584,41 +2010,31 @@ async function fetchDeranaNews() {
                         image: image || FALLBACK_IMAGE,
                         date: article.time || ''
                     });
-
-                    // Rate limit
                     await new Promise(r => setTimeout(r, 500));
                 }
             }
         }
-    } catch (e) {
-        // Silent fail
-    }
-
+    } catch (e) {}
     return newsItems;
 }
 
-// Fetch RSS Feed
+/**
+ * Fetch RSS Feed
+ */
 async function fetchRSS(url, source, limit = 3) {
     const newsItems = [];
-
     try {
         const { data } = await axios.get(url, {
             timeout: 10000,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (compatible; NewsBot/1.0)'
-            }
+            headers: { 'User-Agent': 'Mozilla/5.0' }
         });
-
         const items = data.match(/<item>([\s\S]*?)<\/item>/gi) || [];
-
         for (const item of items.slice(0, limit)) {
             const title = (item.match(/<title>([^<]+)<\/title>/i) || [])[1]?.trim() || '';
             const link = (item.match(/<link>([^<]+)<\/link>/i) || [])[1]?.trim() || '';
             const image = (item.match(/<media:content[^>]*url="([^"]*)"/i) || [])[1]?.trim() || '';
-
             if (title && link) {
                 const { description } = await scrapeArticle(link);
-
                 newsItems.push({
                     source: source,
                     category: 'Latest',
@@ -2628,60 +2044,42 @@ async function fetchRSS(url, source, limit = 3) {
                     image: image || FALLBACK_IMAGE,
                     date: ''
                 });
-
-                // Rate limit
                 await new Promise(r => setTimeout(r, 500));
             }
         }
-    } catch (e) {
-        // Silent fail
-    }
-
+    } catch (e) {}
     return newsItems;
 }
 
-// Fetch All Latest News
+/**
+ * Fetch all latest news from all sources
+ */
 async function fetchAllLatestNews() {
     const sources = [
         { name: 'Hiru', fetch: fetchHiruNews },
         { name: 'Derana', fetch: fetchDeranaNews },
-        {
-            name: 'AdaDerana',
-            fetch: () => fetchRSS(
-                'https://www.adaderana.lk/rss.php',
-                '📰 AdaDerana'
-            )
-        },
-        {
-            name: 'Cricket',
-            fetch: () => fetchRSS(
-                'https://www.espncricinfo.com/rss/content/story/feeds/8.xml',
-                '🏏 ESPN Cricinfo',
-                2
-            )
-        },
+        { name: 'AdaDerana', fetch: () => fetchRSS('https://www.adaderana.lk/rss.php', '📰 AdaDerana') },
+        { name: 'Cricket', fetch: () => fetchRSS('https://www.espncricinfo.com/rss/content/story/feeds/8.xml', '🏏 ESPN', 2) },
         {
             name: 'Ada.lk',
             fetch: async () => {
                 try {
                     const result = await dynews.ada();
                     if (result?.status && result.result?.url) {
-                        const description = cleanText(result.result.desc || '');
-                        if (description.length > 50) {
+                        const desc = cleanText(result.result.desc || '');
+                        if (desc.length > 50) {
                             return [{
                                 source: '📰 Ada.lk',
                                 category: 'Latest',
                                 title: result.result.title,
-                                description: description,
+                                description: desc,
                                 url: result.result.url,
                                 image: result.result.image || FALLBACK_IMAGE,
                                 date: `${result.result.date} ${result.result.time}`
                             }];
                         }
                     }
-                } catch (e) {
-                    // Silent fail
-                }
+                } catch (e) {}
                 return [];
             }
         },
@@ -2691,22 +2089,20 @@ async function fetchAllLatestNews() {
                 try {
                     const result = await dynews.newswire();
                     if (result?.status && result.result?.url) {
-                        const description = cleanText(result.result.desc || '');
-                        if (description.length > 50) {
+                        const desc = cleanText(result.result.desc || '');
+                        if (desc.length > 50) {
                             return [{
                                 source: '📰 Newswire',
                                 category: 'Latest',
                                 title: result.result.title,
-                                description: description,
+                                description: desc,
                                 url: result.result.url,
                                 image: result.result.image || FALLBACK_IMAGE,
                                 date: `${result.result.date} ${result.result.time}`
                             }];
                         }
                     }
-                } catch (e) {
-                    // Silent fail
-                }
+                } catch (e) {}
                 return [];
             }
         },
@@ -2716,48 +2112,37 @@ async function fetchAllLatestNews() {
                 try {
                     const result = await dynews.sirasa();
                     if (result?.status && result.result?.url) {
-                        const description = cleanText(result.result.desc || '');
-                        if (description.length > 50) {
+                        const desc = cleanText(result.result.desc || '');
+                        if (desc.length > 50) {
                             return [{
                                 source: '📺 Sirasa',
                                 category: 'Latest',
                                 title: result.result.title,
-                                description: description,
+                                description: desc,
                                 url: result.result.url,
                                 image: result.result.image || FALLBACK_IMAGE,
                                 date: `${result.result.date} ${result.result.time}`
                             }];
                         }
                     }
-                } catch (e) {
-                    // Silent fail
-                }
+                } catch (e) {}
                 return [];
             }
         }
     ];
 
-    // Fetch all sources in parallel
-    const results = await Promise.allSettled(
-        sources.map(source => source.fetch())
-    );
-
-    // Collect all news items
+    const results = await Promise.allSettled(sources.map(s => s.fetch()));
     const allNews = [];
+    
     sources.forEach((source, index) => {
-        if (
-            results[index].status === 'fulfilled' &&
-            Array.isArray(results[index].value) &&
-            results[index].value.length > 0
-        ) {
+        if (results[index].status === 'fulfilled' && Array.isArray(results[index].value)) {
             allNews.push(...results[index].value);
         }
     });
 
-    // Deduplicate by URL
+    // Deduplicate
     const uniqueNews = [];
     const seenUrls = new Set();
-
     for (const article of allNews) {
         if (article.url && !seenUrls.has(article.url)) {
             seenUrls.add(article.url);
@@ -2768,32 +2153,29 @@ async function fetchAllLatestNews() {
     return uniqueNews;
 }
 
-// Send News Article
+/**
+ * Send news article to group
+ */
 async function sendNews(jid, article) {
     if (!sock?.user) return false;
 
-    const description = truncate(
-        (article.description || article.title || '').trim(),
-        5000
-    );
+    const description = truncate((article.description || article.title || '').trim(), 5000);
 
     const caption = [
-        `📰 *${article.source}* | ${article.category}`,
+        '📰 *' + article.source + '* | ' + article.category,
         '',
-        `📌 *${article.title}*`,
+        '📌 *' + article.title + '*',
         '',
         description,
         '',
-        article.date ? `📅 ${article.date}` : '',
-        `🔗 ${article.url}`,
+        article.date ? '📅 ' + article.date : '',
+        '🔗 ' + article.url,
         '',
         beautifulFooter()
     ].filter(line => line !== '').join('\n');
 
     try {
         let sent;
-
-        // Try sending with article image
         if (article.image?.length > 10) {
             try {
                 sent = await sock.sendMessage(jid, {
@@ -2801,12 +2183,8 @@ async function sendNews(jid, article) {
                     caption: caption,
                     mimetype: 'image/jpeg'
                 });
-            } catch (e) {
-                // Image failed, fall back to bot logo
-            }
+            } catch (e) {}
         }
-
-        // Fallback to bot logo
         if (!sent) {
             sent = await sock.sendMessage(jid, {
                 image: { url: BOT_LOGO },
@@ -2814,48 +2192,33 @@ async function sendNews(jid, article) {
                 mimetype: 'image/png'
             });
         }
-
-        // Add reaction
         await sock.sendMessage(jid, {
-            react: {
-                text: randomEmoji(REACTIONS),
-                key: sent.key
-            }
+            react: { text: randEmoji(REACTIONS), key: sent.key }
         });
-
         return true;
     } catch {
         return false;
     }
 }
 
-// Check and Share New News
+/**
+ * Check and share new news articles
+ */
 async function checkAndShareAllNewNews() {
     if (!sock?.user) return;
-
-    // Check if group is muted
-    if (await db.groupGet(NEWS_GROUP_JID, 'isMuted', false)) {
-        console.log('🔇 News group is muted, skipping...');
-        return;
-    }
+    if (await db.groupGet(NEWS_GROUP_JID, 'isMuted', false)) return;
 
     try {
         const allNews = await fetchAllLatestNews();
-        if (!allNews.length) {
-            console.log('📰 No news articles found');
-            return;
-        }
+        if (!allNews.length) return;
 
         const sentUrls = await db.urlsGet();
 
-        // First run: just save URLs without sending
+        // First run: initialize URL database
         if (!sentUrls.length) {
             for (const article of allNews) {
-                if (article.url) {
-                    await db.urlsAdd(article.url);
-                }
+                if (article.url) await db.urlsAdd(article.url);
             }
-            console.log(`📰 Initialized URL database with ${allNews.length} articles`);
             return;
         }
 
@@ -2863,13 +2226,10 @@ async function checkAndShareAllNewNews() {
         let sharedCount = 0;
         for (const article of allNews) {
             if (!article.url || sentUrls.includes(article.url)) continue;
-
             if (await sendNews(NEWS_GROUP_JID, article)) {
                 await db.urlsAdd(article.url);
                 sharedCount++;
             }
-
-            // Rate limit between messages
             await new Promise(r => setTimeout(r, 3000));
         }
 
@@ -2881,18 +2241,17 @@ async function checkAndShareAllNewNews() {
     }
 }
 
-// ═══════════════════════════════════════
+// ============================================================
 // 🚀 STARTUP
-// ═══════════════════════════════════════
+// ============================================================
 (async () => {
     // Beautiful startup banner
     console.log('\n' + '═'.repeat(50));
-    console.log('  💝 NewsBot LK - Starting Up 💝');
+    console.log('  💝 NewsBot LK v' + config.version + ' 💝');
     console.log('═'.repeat(50));
-    console.log(`  📦 Version: ${config.version}`);
-    console.log(`  👨‍💻 Developer: ${config.developer}`);
-    console.log(`  👑 Owners: ${OWNER_NUMBERS.join(', ')}`);
-    console.log(`  🌐 ${config.portfolio}`);
+    console.log('  👨‍💻 ' + config.developer);
+    console.log('  👑 Owners: ' + OWNER_NUMBERS.join(', '));
+    console.log('  🌐 ' + config.portfolio);
     console.log('═'.repeat(50));
     console.log('  💝 Dedicated to:');
     console.log('  🌸 Umesha Sathyanjali');
@@ -2903,7 +2262,7 @@ async function checkAndShareAllNewNews() {
     // Connect to database
     await connectDatabase();
 
-    // Start the bot
+    // Start bot
     await startBot();
 
     // Auto news interval
@@ -2913,7 +2272,7 @@ async function checkAndShareAllNewNews() {
         }
     }, CHECK_INTERVAL_MS);
 
-    // Auto bio interval (every 30 minutes)
+    // Auto bio interval
     setInterval(async () => {
         await updateBotBio();
     }, 30 * 60 * 1000);
