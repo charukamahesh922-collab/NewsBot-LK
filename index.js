@@ -1,1127 +1,681 @@
 // ============================================
-// 📰 NewsBot LK - Ultimate Bot with GitHub Auto-Sync
-// 👨‍💻 By Charuka Mahesh
-// 💛 Umesha Sathyanjali | Mithila | Sharada
+// 📰 NewsBot LK v8.0.7 - Final Stable
+// 👨‍💻 Developed by Charuka Mahesh
+// 💛 Dedicated to Umesha Sathyanjali | Mithila | Sharada
 // 🌐 https://charukamahesh922-collab.github.io/protifilo/
+// 📧 charukamahesh922@gmail.com
+// 🐙 https://github.com/charukamahesh922-collab
 // ============================================
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
+const mongoose = require('mongoose');
 const Hiru = require('hirunews-scrap');
 const Derana = require('ada-derana-news-scraper');
 const DY_NEWS = require('@dark-yasiya/news-scrap');
+const config = require('./config');
+const voiceClips = require('./voiceReplies');
 const dynews = new DY_NEWS();
-const simpleGit = require('simple-git');
 
 try { if (fs.existsSync(path.join(__dirname, 'app.pid'))) fs.unlinkSync(path.join(__dirname, 'app.pid')); } catch (e) {}
 
 // ============================================
 // CONFIGURATION
 // ============================================
-const GROUP_JID = process.env.GROUP_JID || '120363427636501059@g.us';
-const OWNER_JID = process.env.OWNER_JID || '94762471350@s.whatsapp.net';
-const CHECK_INTERVAL_MS = Number(process.env.CHECK_INTERVAL_MS || 60000);
-const STATE_FILE = path.join(__dirname, 'last-news.json');
+const OWNER_NUMBERS = Array.isArray(config.ownerNumber) ? config.ownerNumber : [config.ownerNumber];
+const NEWS_GROUP_JID = config.newsGroupJid;
+const CHECK_INTERVAL_MS = config.checkIntervalMs;
+const BOT_LOGO = config.botLogo;
+const FALLBACK_IMAGE = config.fallbackImage;
+const REACTIONS = config.reactions;
 const SAVE_FOLDER = path.join(__dirname, 'saved_media');
-const PORTFOLIO_URL = 'https://charukamahesh922-collab.github.io/protifilo/';
+const STATUS_FOLDER = path.join(__dirname, 'saved_status');
+const VV_FOLDER = path.join(__dirname, 'view_once_saved');
+const TEST_MODE = true;
 
-// GitHub Configuration
-const GITHUB_REPO_PATH = __dirname;
-const GITHUB_BRANCH = process.env.GITHUB_BRANCH || 'main';
-const GITHUB_REMOTE = process.env.GITHUB_REMOTE || 'origin';
-const AUTO_SYNC_ENABLED = process.env.AUTO_SYNC_ENABLED !== 'false';
-
-if (!fs.existsSync(SAVE_FOLDER)) fs.mkdirSync(SAVE_FOLDER, { recursive: true });
-
-const BOT_LOGO = 'https://raw.githubusercontent.com/charukamahesh922-collab/NewsBot-LK/refs/heads/main/Assetes/botnews.png';
-const ESANA_API_URL = 'https://esena-news-api-v3.vercel.app/';
-const FALLBACK_IMAGE = 'https://raw.githubusercontent.com/charukamahesh922-collab/Mahawilachchiya-Sports/refs/heads/main/dearan.jpeg';
-
-const STATUS_EMOJIS = ['❤️', '🔥', '👍', '💯', '👏', '😍', '✨', '🌟', '💫', '🎉'];
-const NEWS_REACTIONS = ['📰', '🔥', '👍', '💯', '👏', '🏆', '⭐', '📢'];
-
-// Feature data stores
-const afkUsers = new Map();
-const tags = {};
-const autoReplies = {
-    'hi': '👋 Hello! How can I help you?',
-    'hello': '👋 Hi there! Type .menu for commands.',
-    'hey': '👋 Hey! Type .menu for commands.',
-    'thanks': '🙏 You are welcome!',
-    'thank you': '🙏 You are welcome!',
-    'good morning': '🌅 Good Morning! Have a great day!',
-    'good night': '🌙 Good Night! Sweet dreams!',
-    'bot': '🤖 Yes, I am here! Type .menu for options.'
-};
-const quotes = [
-    "The only way to do great work is to love what you do. - Steve Jobs",
-    "Code is like humor. When you have to explain it, it's bad. - Cory House",
-    "First, solve the problem. Then, write the code. - John Johnson",
-    "Experience is the name everyone gives to their mistakes. - Oscar Wilde",
-    "The best error message is the one that never shows up. - Thomas Fuchs"
-];
-const sinhalaNames = ['නිම්නා', 'සඳලි', 'රුවන්', 'කසුන්', 'දිල්ෂාන්', 'නදීෂා', 'චානුක', 'සජිත්'];
-const truths = ["What is your biggest fear?", "What is your most embarrassing moment?", "Have you ever lied to your best friend?", "What is your secret talent?"];
-const dares = ["Send a voice note singing a song!", "Change your profile picture to a cartoon!", "Send a message using only emojis!", "Take a selfie with a funny face!"];
-let isMuted = false;
-
-let sock = null, reconnectTimer = null, reconnectAttempts = 0;
-let isConnected = false, isShuttingDown = false, lastStatusProcessTime = 0;
-const STATUS_COOLDOWN = 3000;
+[SAVE_FOLDER, STATUS_FOLDER, VV_FOLDER].forEach(f => {
+    if (!fs.existsSync(f)) fs.mkdirSync(f, { recursive: true });
+});
 
 // ============================================
-// GITHUB AUTO-SYNC FUNCTIONS
+// JSON FALLBACK DATABASE
 // ============================================
+const JSON_DB_FILE = path.join(__dirname, 'database.json');
+let useJsonFallback = false;
+let jsonDb = { settings: {}, warnings: {}, bans: [], afk: {}, groupSettings: {}, sentUrls: [] };
 
-/**
- * Initialize git repository
- */
-async function initGitRepo() {
+function loadJsonDb() {
     try {
-        const git = simpleGit(GITHUB_REPO_PATH);
-        const isRepo = await git.checkIsRepo();
-        if (!isRepo) {
-            console.log('📁 Initializing git repository...');
-            await git.init();
-            const repoUrl = process.env.GITHUB_REPO_URL || 'https://github.com/charukamahesh922-collab/NewsBot-LK.git';
-            await git.addRemote(GITHUB_REMOTE, repoUrl);
-            console.log('✅ Git repository initialized');
+        if (fs.existsSync(JSON_DB_FILE)) {
+            const data = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            jsonDb = { settings: {}, warnings: {}, bans: [], afk: {}, groupSettings: {}, sentUrls: [], ...data };
         }
-        return git;
-    } catch (error) {
-        console.error('❌ Git init error:', error.message);
-        return null;
-    }
+    } catch (e) {}
 }
 
-/**
- * Sync file to GitHub
- */
-async function syncToGitHub(filePath, commitMessage = '🔄 Updated last-news.json') {
-    if (!AUTO_SYNC_ENABLED) {
-        console.log('⏭️ GitHub auto-sync is disabled');
+function saveJsonDb() {
+    try { fs.writeFileSync(JSON_DB_FILE, JSON.stringify(jsonDb, null, 2)); } catch (e) {}
+}
+
+// ============================================
+// MONGOOSE MODELS
+// ============================================
+const settingSchema = new mongoose.Schema({
+    key: { type: String, unique: true, required: true },
+    value: { type: mongoose.Schema.Types.Mixed, required: true },
+    updatedAt: { type: Date, default: Date.now }
+});
+
+const warningSchema = new mongoose.Schema({
+    userId: { type: String, required: true },
+    groupId: { type: String, required: true },
+    count: { type: Number, default: 1 },
+    updatedAt: { type: Date, default: Date.now }
+}).index({ userId: 1, groupId: 1 });
+
+const banSchema = new mongoose.Schema({
+    userId: { type: String, unique: true, required: true },
+    reason: { type: String, default: '' },
+    bannedAt: { type: Date, default: Date.now }
+});
+
+const afkSchema = new mongoose.Schema({
+    userId: { type: String, unique: true, required: true },
+    reason: { type: String, default: 'AFK' },
+    afkAt: { type: Date, default: Date.now }
+});
+
+const groupSettingSchema = new mongoose.Schema({
+    groupId: { type: String, unique: true, required: true },
+    isMuted: { type: Boolean, default: false },
+    updatedAt: { type: Date, default: Date.now }
+}, { strict: false });
+
+let Setting, Warning, Ban, Afk, GroupSetting;
+
+// ============================================
+// DATABASE CONNECTION
+// ============================================
+async function connectDatabase() {
+    if (process.env.MONGO_ENABLED === 'false') {
+        useJsonFallback = true;
+        loadJsonDb();
+        console.log('🗄️ Using JSON file database');
         return false;
     }
 
-    try {
-        const git = await initGitRepo();
-        if (!git) return false;
-
-        // Check if file exists
-        if (!fs.existsSync(filePath)) {
-            console.log('⚠️ File not found:', filePath);
-            return false;
-        }
-
-        // Add file to git
-        await git.add(filePath);
-
-        // Check if there are changes
-        const status = await git.status();
-        if (status.files.length === 0) {
-            console.log('ℹ️ No changes to commit');
-            return true;
-        }
-
-        // Get current branch
-        const branch = await git.branch();
-        const currentBranch = branch.current || GITHUB_BRANCH;
-
-        // Configure git user if not set
+    const urls = [{ url: config.mongoInternal }, { url: config.mongoPublic }];
+    for (const { url } of urls) {
         try {
-            await git.addConfig('user.name', process.env.GIT_USER_NAME || 'NewsBot LK');
-            await git.addConfig('user.email', process.env.GIT_USER_EMAIL || 'newsbot@charukamahesh.com');
-        } catch (e) {}
+            await mongoose.connect(url, {
+                dbName: config.dbName,
+                serverSelectionTimeoutMS: 10000,
+                connectTimeoutMS: 10000,
+                ssl: false, tls: false,
+                retryWrites: false
+            });
 
-        // Commit changes
-        await git.commit(commitMessage);
-        console.log('✅ Committed changes locally');
+            Setting = mongoose.model('Setting', settingSchema);
+            Warning = mongoose.model('Warning', warningSchema);
+            Ban = mongoose.model('Ban', banSchema);
+            Afk = mongoose.model('Afk', afkSchema);
+            GroupSetting = mongoose.model('GroupSetting', groupSettingSchema);
 
-        // Push to remote
-        console.log('📤 Pushing to GitHub...');
-        await git.push(GITHUB_REMOTE, currentBranch);
-        console.log('✅ Successfully synced to GitHub!');
-        
-        return true;
-    } catch (error) {
-        console.error('❌ GitHub sync error:', error.message);
-        return false;
-    }
-}
-
-/**
- * Sync state file to GitHub with retry
- */
-async function syncStateToGitHub(state, retries = 3) {
-    if (!AUTO_SYNC_ENABLED) return false;
-
-    for (let i = 0; i < retries; i++) {
-        try {
-            // Write file
-            const tempFile = STATE_FILE + '.tmp';
-            fs.writeFileSync(tempFile, JSON.stringify(state, null, 2));
-            fs.renameSync(tempFile, STATE_FILE);
-            
-            // Sync to GitHub
-            const success = await syncToGitHub(STATE_FILE, `🔄 Updated news state - ${new Date().toISOString()}`);
-            if (success) return true;
-            
-            // Wait before retry
-            if (i < retries - 1) {
-                console.log(`⏳ Retrying sync... (${i + 1}/${retries})`);
-                await new Promise(r => setTimeout(r, 3000));
+            const count = await Setting.countDocuments();
+            if (count === 0) {
+                for (const [key, value] of Object.entries(config.defaults)) {
+                    await Setting.create({ key, value });
+                }
+                console.log('📝 Default settings migrated to MongoDB');
             }
-        } catch (error) {
-            console.error(`❌ Sync attempt ${i + 1} failed:`, error.message);
+
+            console.log('✅ Mongoose Connected');
+            return true;
+        } catch (e) {
+            if (mongoose.connection.readyState !== 0) await mongoose.disconnect();
         }
     }
+
+    useJsonFallback = true;
+    loadJsonDb();
+    console.log('🗄️ Using JSON fallback');
     return false;
 }
 
 // ============================================
-// STATE MANAGEMENT (Modified for GitHub sync)
+// DATABASE FUNCTIONS
 // ============================================
+const db = {
+    get: async (key, def) => {
+        if (useJsonFallback) return jsonDb.settings[key] ?? config.defaults[key] ?? def;
+        try { const d = await Setting.findOne({ key }); return d ? d.value : (config.defaults[key] ?? def); } catch { return config.defaults[key] ?? def; }
+    },
+    set: async (key, val) => {
+        if (useJsonFallback) { jsonDb.settings[key] = val; saveJsonDb(); return true; }
+        try { await Setting.updateOne({ key }, { $set: { key, value: val, updatedAt: new Date() } }, { upsert: true }); return true; } catch { return false; }
+    },
+    all: async () => {
+        if (useJsonFallback) return { ...config.defaults, ...jsonDb.settings };
+        try { const docs = await Setting.find({}); const s = {}; docs.forEach(d => { s[d.key] = d.value; }); return { ...config.defaults, ...s }; } catch { return { ...config.defaults }; }
+    },
+    warnAdd: async (uid, gid) => {
+        if (useJsonFallback) { const k = `${uid}_${gid}`; jsonDb.warnings[k] = (jsonDb.warnings[k] || 0) + 1; saveJsonDb(); return jsonDb.warnings[k]; }
+        try { const r = await Warning.findOneAndUpdate({ userId: uid, groupId: gid }, { $inc: { count: 1 }, updatedAt: new Date() }, { upsert: true, new: true }); return r?.count || 0; } catch { return 0; }
+    },
+    warnClear: async (uid, gid) => {
+        if (useJsonFallback) { delete jsonDb.warnings[`${uid}_${gid}`]; saveJsonDb(); return true; }
+        try { await Warning.deleteMany({ userId: uid, groupId: gid }); return true; } catch { return false; }
+    },
+    banAdd: async (uid, reason = '') => {
+        if (useJsonFallback) { if (!jsonDb.bans.find(b => b.userId === uid)) { jsonDb.bans.push({ userId: uid, reason, bannedAt: new Date().toISOString() }); saveJsonDb(); } return true; }
+        try { await Ban.updateOne({ userId: uid }, { $set: { userId: uid, reason, bannedAt: new Date() } }, { upsert: true }); return true; } catch { return false; }
+    },
+    banRemove: async (uid) => {
+        if (useJsonFallback) { jsonDb.bans = jsonDb.bans.filter(b => b.userId !== uid); saveJsonDb(); return true; }
+        try { await Ban.deleteOne({ userId: uid }); return true; } catch { return false; }
+    },
+    banCheck: async (uid) => {
+        if (useJsonFallback) return jsonDb.bans.some(b => b.userId === uid);
+        try { return !!(await Ban.findOne({ userId: uid })); } catch { return false; }
+    },
+    banAll: async () => {
+        if (useJsonFallback) return jsonDb.bans;
+        try { return await Ban.find({}); } catch { return []; }
+    },
+    afkSet: async (uid, reason) => {
+        if (useJsonFallback) { jsonDb.afk[uid] = { userId: uid, reason, afkAt: new Date().toISOString() }; saveJsonDb(); return true; }
+        try { await Afk.updateOne({ userId: uid }, { $set: { userId: uid, reason, afkAt: new Date() } }, { upsert: true }); return true; } catch { return false; }
+    },
+    afkRemove: async (uid) => {
+        if (useJsonFallback) { delete jsonDb.afk[uid]; saveJsonDb(); return true; }
+        try { await Afk.deleteOne({ userId: uid }); return true; } catch { return false; }
+    },
+    afkGet: async (uid) => {
+        if (useJsonFallback) return jsonDb.afk[uid] || null;
+        try { return await Afk.findOne({ userId: uid }); } catch { return null; }
+    },
+    groupGet: async (gid, key, def) => {
+        if (useJsonFallback) return jsonDb.groupSettings[gid]?.[key] ?? def;
+        try { const d = await GroupSetting.findOne({ groupId: gid }); return d?.[key] ?? def; } catch { return def; }
+    },
+    groupSet: async (gid, key, val) => {
+        if (useJsonFallback) { if (!jsonDb.groupSettings[gid]) jsonDb.groupSettings[gid] = {}; jsonDb.groupSettings[gid][key] = val; saveJsonDb(); return true; }
+        try { await GroupSetting.updateOne({ groupId: gid }, { $set: { [key]: val, updatedAt: new Date() } }, { upsert: true }); return true; } catch { return false; }
+    },
+    urlsGet: async () => {
+        if (useJsonFallback) return jsonDb.sentUrls || [];
+        try { const d = await Setting.findOne({ key: 'sentUrls' }); return d?.value || []; } catch { return []; }
+    },
+    urlsAdd: async (url) => {
+        if (useJsonFallback) { if (!jsonDb.sentUrls.includes(url)) { jsonDb.sentUrls.push(url); saveJsonDb(); } return true; }
+        try { await Setting.updateOne({ key: 'sentUrls' }, { $addToSet: { value: url } }, { upsert: true }); return true; } catch { return false; }
+    },
+    urlsCount: async () => {
+        if (useJsonFallback) return jsonDb.sentUrls.length;
+        try { const d = await Setting.findOne({ key: 'sentUrls' }); return d?.value?.length || 0; } catch { return 0; }
+    }
+};
 
-function loadState() { 
-    try { 
-        if (fs.existsSync(STATE_FILE)) { 
-            const s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); 
-            if (!s.sentUrls) s.sentUrls = []; 
-            if (!s.lastSync) s.lastSync = null;
-            return s; 
-        } 
-    } catch (e) {} 
-    return { sentUrls: [], lastSync: null }; 
+// ============================================
+// HELPERS
+// ============================================
+const footer = () => `\n${'━'.repeat(25)}\n⚡ *ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴄʜᴀʀᴜᴋᴀ ᴍᴀʜᴇsʜ*`;
+
+const cleanText = (t) => {
+    if (!t) return '';
+    return t.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<[^>]*>/g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/&zwj;/gi, '').replace(/&zwnj;/gi, '').replace(/\s+/g, ' ').trim();
+};
+
+const truncate = (t, max = 5000) => {
+    if (!t || t.length <= max) return t;
+    const s = t.substring(0, max);
+    const cuts = [s.lastIndexOf('. '), s.lastIndexOf('? '), s.lastIndexOf('! '), s.lastIndexOf('\n')].filter(p => p > max * 0.6);
+    if (cuts.length) return s.substring(0, Math.max(...cuts) + 1).trim();
+    const ls = s.lastIndexOf(' ');
+    return ls > max * 0.7 ? s.substring(0, ls).trim() + '...' : s.trim() + '...';
+};
+
+const randEmoji = () => REACTIONS[Math.floor(Math.random() * REACTIONS.length)];
+
+// ============================================
+// BOT STATE
+// ============================================
+let sock = null, reconnectTimer = null, reconnectAttempts = 0;
+let isConnected = false, isShuttingDown = false, lastStatusTime = 0;
+let ownerJid = null;
+
+function isOwner(senderNum, sender) {
+    const c = senderNum.replace(/[^0-9]/g, '');
+    if (OWNER_NUMBERS.some(n => n.replace(/[^0-9]/g, '') === c)) return true;
+    if (ownerJid && sender === ownerJid) return true;
+    if (ownerJid && ownerJid.split('@')[0].replace(/[^0-9]/g, '') === c) return true;
+    return false;
 }
 
-function saveState(s) { 
-    try { 
-        if (s.sentUrls?.length > 15000) s.sentUrls = s.sentUrls.slice(-15000);
-        s.lastSync = new Date().toISOString();
-        
-        // Save locally
-        const tempFile = STATE_FILE + '.tmp';
-        fs.writeFileSync(tempFile, JSON.stringify(s, null, 2));
-        fs.renameSync(tempFile, STATE_FILE);
-        console.log('💾 State saved locally');
-        
-        // Auto-sync to GitHub (background)
-        syncStateToGitHub(s).catch(err => {
-            console.error('❌ Background sync failed:', err.message);
-        });
-        
-        return true;
-    } catch (e) {
-        console.error('❌ Save state error:', e.message);
-        return false;
-    } 
+async function canUseBot(jid, owner) {
+    if (owner) return true;
+    const mode = await db.get('botMode', 'public');
+    const isGroup = jid.endsWith('@g.us');
+    switch (mode) {
+        case 'private': return false;
+        case 'inbox': return !isGroup;
+        case 'groups': return isGroup;
+        default: return true;
+    }
 }
 
 // ============================================
-// BOT FUNCTIONS
+// MEDIA (Status save only, NO auto forward)
 // ============================================
-
-async function autoReact(mid) { if (!sock || !mid) return; try { await sock.sendMessage(GROUP_JID, { react: { text: NEWS_REACTIONS[Math.floor(Math.random() * NEWS_REACTIONS.length)], key: mid } }); } catch (e) {} }
-
-async function scrapeArticleWithImage(url) {
-  try { const res = await axios.get(url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } }); const html = res.data; const paragraphs = html.match(/<p[^>]*>([\s\S]*?)<\/p>/gi); let d = ''; if (paragraphs) { d = paragraphs.map(p => p.replace(/<[^>]*>/g, '').trim()).filter(p => p.length > 40 && !p.includes('function(') && !p.includes('Copyright') && !p.includes('var ') && !p.includes('Solution by') && !p.includes('Technology Partner') && !p.includes('Fortunacreatives') && !p.includes('HomeLatest') && !p.includes('SportsBusiness') && !p.includes('Science & Tech') && !p.includes('Top Picture') && !p.includes('Add Ada Derana') && !p.includes('Add on Google')).join('\n\n').replace(/&apos;/g, "'").replace(/&#x27;/g, "'").replace(/&zwj;/g, '').replace(/&zwnj;/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim(); } let img = ''; const im = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"[^>]*>/i) || html.match(/<img[^>]*src="(https:\/\/[^"]*\.(?:jpg|jpeg|png|webp))"[^>]*>/i); if (im) { img = im[1]; if (img.startsWith('/')) img = new URL(url).origin + img; } return { description: d, image: img }; } catch (e) {} return { description: '', image: '' };
+async function downloadMedia(msg) {
+    try {
+        const b = await import('@whiskeysockets/baileys');
+        return await b.downloadMediaMessage(msg, 'buffer', {}, { logger: { info: () => {}, error: () => {}, warn: () => {} } });
+    } catch { return null; }
 }
 
-async function sendConnectionNotice() {
-  if (!isConnected || !sock?.user) return;
-  const msg = `💝 News Bot 💝\n\n✅ Connected\n📡 10 Sources | 20+ Commands\n🔄 Every ${CHECK_INTERVAL_MS/1000}s\n📌 GitHub Auto-Sync: ${AUTO_SYNC_ENABLED ? '✅ ON' : '❌ OFF'}\n\n📋 .menu for all commands\n\n🌐 ${PORTFOLIO_URL}\n\nＢʏ Ｃʜᴀʀᴜᴋᴀ Ｍᴀʜᴇꜱʜ\n💛 Umesha & Mithila`;
-  try { await sock.sendMessage(OWNER_JID, { image: { url: BOT_LOGO }, caption: msg, mimetype: 'image/png' }); } catch (e) {}
-}
-
-async function sendBotMenu(jid) {
-  if (!isConnected || !sock?.user) return;
-  const msg = `💝 *News Bot LK* 💝\n\n📌 *COMMANDS*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n📰 *.news* - Fetch News\n📊 *.stats* - Statistics\n💾 *.save* - Save Media\n\n🎮 *FUN COMMANDS*\n.joke .quote .flip .roll\n.truth .dare .name\n\n🛠️ *UTILITY*\n.calc .wiki .google .yt\n.ping .system .rules\n.afk .tag .get .tags\n\n👥 *GROUP MANAGEMENT*\n.welcome .goodbye .promote .demote\n.mute @user .kick @user .add @user\n.everyone .poll .remind\n\n━━━━━━━━━━━━━━━━━━━━━━━\n🌐 ${PORTFOLIO_URL}\n\nＢʏ Ｃʜᴀʀᴜᴋᴀ Ｍᴀʜᴇꜱʜ\n💛 Umesha & Mithila`;
-  try { await sock.sendMessage(jid, { text: msg }); } catch (e) { console.error('Menu error:', e.message); }
-}
-
-async function autoViewAndReact(statusMsg) {
-  if (!sock || !isConnected) return;
-  const now = Date.now();
-  if (now - lastStatusProcessTime < STATUS_COOLDOWN) return;
-  try { const { key } = statusMsg; if (!key || key.fromMe) return; if ((key.participant || key.remoteJid) === sock.user?.id) return; lastStatusProcessTime = now; await sock.readMessages([key]); await sock.sendMessage('status@broadcast', { react: { text: STATUS_EMOJIS[Math.floor(Math.random() * STATUS_EMOJIS.length)], key: key } }); } catch (err) {}
-}
-
-async function saveMedia(msg) {
-  if (!sock || !msg) return null;
-  try { const t = Object.keys(msg.message)[0]; let b = null, e = '.bin'; if (t === 'imageMessage') { b = await sock.downloadMediaMessage(msg); e = '.jpg'; } else if (t === 'videoMessage') { b = await sock.downloadMediaMessage(msg); e = '.mp4'; } else if (t === 'stickerMessage') { b = await sock.downloadMediaMessage(msg); e = '.webp'; } if (b) { const fp = path.join(SAVE_FOLDER, `saved_${Date.now()}${e}`); fs.writeFileSync(fp, b); return { fp, buf: b, type: t }; } } catch (e) {} return null;
+async function saveMediaToFile(msg, folder = SAVE_FOLDER) {
+    try {
+        let rm = msg; let type = Object.keys(msg.message || {})[0];
+        if (type?.includes('viewOnce')) { const inner = msg.message[type]?.message; if (inner) { rm = { ...msg, message: inner }; type = Object.keys(inner)[0]; } }
+        const em = { imageMessage: '.jpg', videoMessage: '.mp4', audioMessage: '.ogg', stickerMessage: '.webp' };
+        const ext = em[type]; if (!ext) return null;
+        const buf = await downloadMedia(rm); if (!buf || buf.length < 100) return null;
+        const fn = `media_${Date.now()}${ext}`; fs.writeFileSync(path.join(folder, fn), buf);
+        return { buffer: buf, type, ext, filename: fn };
+    } catch { return null; }
 }
 
 // ============================================
-// MAIN BOT CONNECTION
+// STATUS HANDLER (Auto View + Auto React - NO Auto Forward)
 // ============================================
-async function startWhatsAppBot() {
-  if (sock) return;
-  const baileys = await import('@whiskeysockets/baileys');
-  const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = baileys;
-  const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'auth_info_baileys'));
-  sock = makeWASocket({ 
-    auth: state, 
-    browser: ['NewsBot', 'Chrome', '1.0.0'], 
-    markOnlineOnConnect: false, 
-    connectTimeoutMs: 30000 
-  });
+async function handleStatus(msg) {
+    if (!sock) return;
 
-  // ============================================
-  // MESSAGE HANDLER - WORKS IN ALL CHATS
-  // ============================================
-  sock.ev.on('messages.upsert', async (m) => {
-    if (!isConnected) return;
-    for (const msg of m.messages) {
-      if (!msg.message) continue;
-      
-      const jid = msg.key.remoteJid;
-      const fromMe = msg.key.fromMe;
-      
-      if (jid === 'status@broadcast') { 
-        await autoViewAndReact(msg); 
-        continue; 
-      }
-      
-      if (fromMe) continue;
+    try {
+        const { key } = msg;
+        if (key.fromMe) return;
 
-      let rawText = '';
-      if (msg.message.conversation) rawText = msg.message.conversation;
-      else if (msg.message.extendedTextMessage?.text) rawText = msg.message.extendedTextMessage.text;
-      else if (msg.message.imageMessage?.caption) rawText = msg.message.imageMessage.caption;
-      else if (msg.message.videoMessage?.caption) rawText = msg.message.videoMessage.caption;
-      
-      if (!rawText) continue;
+        const participant = key.participant || key.remoteJid;
+        if (!participant || participant === sock.user?.id) return;
 
-      const lowerText = rawText.trim().toLowerCase();
-      const sender = msg.key.participant || jid;
+        // Rate limit
+        if (Date.now() - lastStatusTime < 3000) return;
+        lastStatusTime = Date.now();
 
-      console.log(`📩 [${jid}] ${sender}: ${rawText}`);
+        const senderNumber = participant.split('@')[0].replace(/:.*/, '');
 
-      // AFK CHECK
-      if (msg.message.extendedTextMessage?.contextInfo?.mentionedJid) {
-        for (const mentioned of msg.message.extendedTextMessage.contextInfo.mentionedJid) {
-          if (afkUsers.has(mentioned)) {
-            const afk = afkUsers.get(mentioned);
-            const mins = Math.floor((Date.now() - afk.time) / 60000);
-            await sock.sendMessage(jid, { 
-              text: `🔇 @${mentioned.split('@')[0]} is AFK: ${afk.reason}\n⏰ Away for ${mins} minutes`, 
-              mentions: [mentioned] 
-            });
-          }
+        // Get settings
+        const autoView = await db.get('autoStatusView', true);
+        const autoReact = await db.get('autoStatusReact', true);
+        const antiViewOnce = await db.get('antiViewOnce', false);
+
+        // Skip view-once if anti-vv is on
+        if (antiViewOnce) {
+            const isViewOnce = msg.message?.imageMessage?.viewOnce || msg.message?.videoMessage?.viewOnce;
+            if (isViewOnce) {
+                console.log(`🚫 Skipped view-once status: ${senderNumber}`);
+                return;
+            }
         }
-      }
 
-      // AUTO REPLIES
-      for (const [word, reply] of Object.entries(autoReplies)) {
-        if (lowerText === word) {
-          await sock.sendMessage(jid, { text: reply });
-          return;
-        }
-      }
-
-      // ============ COMMANDS ============
-
-      if (lowerText === '.save' || lowerText === '#save') {
-        const ctx = msg.message.extendedTextMessage?.contextInfo;
-        if (ctx?.quotedMessage && ctx?.stanzaId) {
-          const fm = { key: { remoteJid: jid, id: ctx.stanzaId }, message: ctx.quotedMessage };
-          const saved = await saveMedia(fm);
-          if (saved) { 
-            const mt = Object.keys(ctx.quotedMessage)[0]; 
-            if (mt === 'imageMessage') await sock.sendMessage(jid, { image: saved.buf, caption: '💾 Saved!' }); 
-            else if (mt === 'videoMessage') await sock.sendMessage(jid, { video: saved.buf, caption: '💾 Saved!' }); 
-            else if (mt === 'stickerMessage') await sock.sendMessage(jid, { sticker: saved.buf }); 
-          } else await sock.sendMessage(jid, { text: '❌ Failed to save!' });
-        } else await sock.sendMessage(jid, { text: '💡 Reply to media with .save' });
-        return;
-      }
-
-      if (lowerText === '.menu' || lowerText === '#menu' || lowerText === 'menu' || lowerText === 'help' || lowerText === '.help') { 
-        await sendBotMenu(jid); 
-        return; 
-      }
-      
-      if (lowerText === '.news' || lowerText === '#news' || lowerText === 'news') { 
-        if (jid.endsWith('@g.us')) {
-          await sock.sendMessage(jid, { text: '📰 Fetching latest news...' });
-          await checkAndShareAllNewNews(); 
+        // Auto View
+        if (autoView) {
+            await sock.readMessages([key]);
+            console.log(`👁️ Status viewed: ${senderNumber}`);
         } else {
-          await sock.sendMessage(jid, { text: '📰 News command works only in groups.' }); 
-        }
-        return; 
-      }
-      
-      if (lowerText === '.stats' || lowerText === '#stats' || lowerText === 'stats') { 
-        const st = loadState(); 
-        await sock.sendMessage(jid, { 
-          text: `💝 *News Bot Stats*\n\n📰 Sent: *${st.sentUrls?.length || 0}*\n🔄 Every: *${CHECK_INTERVAL_MS/1000}s*\n📡 Sources: *10*\n📌 Last Sync: ${st.lastSync || 'Never'}\n\n🌐 ${PORTFOLIO_URL}` 
-        }); 
-        return; 
-      }
-
-      // ============ FUN COMMANDS ============
-      if (lowerText === '.joke') { 
-        try { 
-          const r = await axios.get('https://v2.jokeapi.dev/joke/Any?type=single', { timeout: 5000 }); 
-          await sock.sendMessage(jid, { text: `😂 ${r.data.joke}` }); 
-        } catch (e) { 
-          await sock.sendMessage(jid, { text: '😂 Why did the programmer quit? Because he didn\'t get arrays!' }); 
-        } 
-        return; 
-      }
-      
-      if (lowerText === '.quote') { 
-        await sock.sendMessage(jid, { text: `💭 "${quotes[Math.floor(Math.random() * quotes.length)]}"` }); 
-        return; 
-      }
-      
-      if (lowerText === '.flip' || lowerText === '.coin') { 
-        await sock.sendMessage(jid, { text: `🪙 ${Math.random() < 0.5 ? 'Heads!' : 'Tails!'}` }); 
-        return; 
-      }
-      
-      if (lowerText.startsWith('.roll')) { 
-        const max = parseInt(rawText.split(' ')[1]) || 6; 
-        await sock.sendMessage(jid, { text: `🎲 You rolled: ${Math.floor(Math.random() * max) + 1} (1-${max})` }); 
-        return; 
-      }
-      
-      if (lowerText === '.truth') { 
-        await sock.sendMessage(jid, { text: `🎯 Truth: ${truths[Math.floor(Math.random() * truths.length)]}` }); 
-        return; 
-      }
-      
-      if (lowerText === '.dare') { 
-        await sock.sendMessage(jid, { text: `🔥 Dare: ${dares[Math.floor(Math.random() * dares.length)]}` }); 
-        return; 
-      }
-      
-      if (lowerText === '.name') { 
-        await sock.sendMessage(jid, { text: `📛 Name: ${sinhalaNames[Math.floor(Math.random() * sinhalaNames.length)]}` }); 
-        return; 
-      }
-
-      // ============ UTILITY COMMANDS ============
-      if (lowerText.startsWith('.calc ')) { 
-        try { 
-          const result = eval(rawText.replace('.calc', '').trim()); 
-          await sock.sendMessage(jid, { text: `🧮 Result: ${result}` }); 
-        } catch (e) { 
-          await sock.sendMessage(jid, { text: '❌ Invalid expression!' }); 
-        } 
-        return; 
-      }
-      
-      if (lowerText.startsWith('.wiki ')) { 
-        const q = rawText.replace('.wiki', '').trim(); 
-        try { 
-          const r = await axios.get(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(q)}`, { timeout: 10000 }); 
-          if (r.data.extract) { 
-            await sock.sendMessage(jid, { text: `📚 *${r.data.title}*\n\n${r.data.extract.substring(0, 500)}...\n\n🔗 ${r.data.content_urls.desktop.page}` }); 
-          } 
-        } catch (e) { 
-          await sock.sendMessage(jid, { text: '❌ Article not found!' }); 
-        } 
-        return; 
-      }
-      
-      if (lowerText.startsWith('.google ') || lowerText.startsWith('.g ')) { 
-        const q = rawText.replace('.google', '').replace('.g', '').trim(); 
-        await sock.sendMessage(jid, { text: `🔍 Search: https://www.google.com/search?q=${encodeURIComponent(q)}` }); 
-        return; 
-      }
-      
-      if (lowerText.startsWith('.youtube ') || lowerText.startsWith('.yt ')) { 
-        const q = rawText.replace('.youtube', '').replace('.yt', '').trim(); 
-        await sock.sendMessage(jid, { text: `▶️ Search: https://www.youtube.com/results?search_query=${encodeURIComponent(q)}` }); 
-        return; 
-      }
-      
-      if (lowerText === '.ping') { 
-        const start = Date.now(); 
-        await sock.sendMessage(jid, { text: `🏓 Pong! ${Date.now() - start}ms | Status: Online` }); 
-        return; 
-      }
-      
-      if (lowerText === '.system' || lowerText === '.sys') { 
-        const info = `🖥️ *System*\n\n⏱️ Uptime: ${Math.floor(os.uptime()/3600)}h\n💾 Memory: ${Math.floor(os.freemem()/1024/1024)}MB\n🖥️ Platform: ${os.platform()}\n📌 GitHub Sync: ${AUTO_SYNC_ENABLED ? '✅ ON' : '❌ OFF'}\n\n🌐 ${PORTFOLIO_URL}`; 
-        await sock.sendMessage(jid, { text: info }); 
-        return; 
-      }
-      
-      if (lowerText === '.rules') { 
-        await sock.sendMessage(jid, { text: `📋 *Group Rules*\n\n1️⃣ Be respectful\n2️⃣ No spam\n3️⃣ No offensive content\n4️⃣ Stay on topic\n5️⃣ Have fun!\n\n🌐 ${PORTFOLIO_URL}` }); 
-        return; 
-      }
-
-      // ============ AFK SYSTEM ============
-      if (lowerText.startsWith('.afk')) { 
-        const reason = rawText.replace('.afk', '').trim() || 'AFK'; 
-        afkUsers.set(sender, { reason, time: Date.now() }); 
-        await sock.sendMessage(jid, { text: `🔇 You are now AFK: ${reason}` }); 
-        return; 
-      }
-
-      // ============ TAG SYSTEM ============
-      if (lowerText.startsWith('.tag ')) { 
-        const parts = rawText.split(' '); 
-        const tn = parts[1]; 
-        const tc = parts.slice(2).join(' '); 
-        if (!tags[tn]) tags[tn] = []; 
-        tags[tn].push(tc); 
-        await sock.sendMessage(jid, { text: `🏷️ Tag "${tn}" saved!` }); 
-        return; 
-      }
-      
-      if (lowerText.startsWith('.get ')) { 
-        const tn = rawText.split(' ')[1]; 
-        if (tags[tn]) { 
-          await sock.sendMessage(jid, { text: `*${tn}:*\n${tags[tn].join('\n')}` }); 
-        } else { 
-          await sock.sendMessage(jid, { text: '❌ Tag not found!' }); 
-        } 
-        return; 
-      }
-      
-      if (lowerText === '.tags') { 
-        const tl = Object.keys(tags).join(', ') || 'No tags'; 
-        await sock.sendMessage(jid, { text: `🏷️ Tags: ${tl}` }); 
-        return; 
-      }
-
-      // ============ GROUP COMMANDS ============
-      if (jid.endsWith('@g.us')) {
-        if (lowerText === '.mute' || lowerText === '.silence') { 
-          isMuted = true; 
-          await sock.sendMessage(jid, { text: '🔇 Bot muted for 30 mins.' }); 
-          setTimeout(() => { isMuted = false; }, 30*60*1000); 
-          return; 
-        }
-        
-        if (lowerText === '.unmute' || lowerText === '.speak') { 
-          isMuted = false; 
-          await sock.sendMessage(jid, { text: '🔊 Bot unmuted!' }); 
-          return; 
-        }
-        
-        if (lowerText.startsWith('.poll ')) { 
-          const q = rawText.replace('.poll', '').trim(); 
-          await sock.sendMessage(jid, { poll: { name: q, values: ['Yes', 'No', 'Maybe'], selectableCount: 1 } }); 
-          return; 
-        }
-        
-        if (lowerText === '.everyone' || lowerText === '.all') { 
-          try { 
-            const meta = await sock.groupMetadata(jid); 
-            const mentions = meta.participants.map(p => p.id); 
-            await sock.sendMessage(jid, { text: '📢 Attention everyone!', mentions }); 
-          } catch (e) { 
-            await sock.sendMessage(jid, { text: '❌ Failed to mention everyone!' }); 
-          } 
-          return; 
-        }
-        
-        if (lowerText.startsWith('.remind ')) { 
-          const parts = rawText.split(' '); 
-          const time = parseInt(parts[1]); 
-          const reminder = parts.slice(2).join(' '); 
-          await sock.sendMessage(jid, { text: `⏰ Reminder set for ${time} minutes!` }); 
-          setTimeout(async () => { 
-            await sock.sendMessage(jid, { text: `⏰ Reminder: ${reminder}` }); 
-          }, time*60*1000); 
-          return; 
+            return;
         }
 
-        // ============ GROUP MANAGEMENT ============
-        if (lowerText === '.welcome') { 
-          await sock.sendMessage(jid, { text: `👋 *Welcome Message*\n\nWelcome new members with a personalized message!\n\nType .setwelcome <message> to customize.` }); 
-          return; 
-        }
-
-        if (lowerText === '.goodbye') { 
-          await sock.sendMessage(jid, { text: `👋 *Goodbye Message*\n\nSay goodbye when members leave!\n\nType .setgoodbye <message> to customize.` }); 
-          return; 
-        }
-
-        if (lowerText.startsWith('.mute @')) {
-          try {
-            const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
-            if (mentioned && mentioned.length > 0) {
-              const target = mentioned[0];
-              await sock.groupParticipantsUpdate(jid, [target], 'demote');
-              await sock.sendMessage(jid, { text: `🔇 User @${target.split('@')[0]} has been muted!`, mentions: [target] });
+        // Auto React
+        if (autoReact) {
+            const emoji = config.statusEmojis[Math.floor(Math.random() * config.statusEmojis.length)];
+            try {
+                await sock.sendMessage('status@broadcast', { react: { text: emoji, key } });
+                console.log(`  💬 Reacted: ${emoji}`);
+            } catch (e) {
+                console.log(`  ⚠️ React failed: ${e.message}`);
             }
-          } catch (e) { await sock.sendMessage(jid, { text: '❌ Failed to mute user. Make sure I am admin!' }); }
-          return;
         }
 
-        if (lowerText.startsWith('.kick @')) {
-          try {
-            const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
-            if (mentioned && mentioned.length > 0) {
-              const target = mentioned[0];
-              await sock.groupParticipantsUpdate(jid, [target], 'remove');
-              await sock.sendMessage(jid, { text: `👢 User @${target.split('@')[0]} has been removed!`, mentions: [target] });
-            }
-          } catch (e) { await sock.sendMessage(jid, { text: '❌ Failed to kick user. Make sure I am admin!' }); }
-          return;
-        }
+        // NOTE: Status is NOT auto-forwarded to owner
+        // Use .vv command to save view-once media
+        // Use .save command to save any media
 
-        if (lowerText.startsWith('.promote @')) {
-          try {
-            const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
-            if (mentioned && mentioned.length > 0) {
-              const target = mentioned[0];
-              await sock.groupParticipantsUpdate(jid, [target], 'promote');
-              await sock.sendMessage(jid, { text: `⭐ User @${target.split('@')[0]} has been promoted to admin!`, mentions: [target] });
-            }
-          } catch (e) { await sock.sendMessage(jid, { text: '❌ Failed to promote user. Make sure I am admin!' }); }
-          return;
-        }
-
-        if (lowerText.startsWith('.demote @')) {
-          try {
-            const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
-            if (mentioned && mentioned.length > 0) {
-              const target = mentioned[0];
-              await sock.groupParticipantsUpdate(jid, [target], 'demote');
-              await sock.sendMessage(jid, { text: `⬇️ User @${target.split('@')[0]} has been demoted!`, mentions: [target] });
-            }
-          } catch (e) { await sock.sendMessage(jid, { text: '❌ Failed to demote user. Make sure I am admin!' }); }
-          return;
-        }
-
-        if (lowerText.startsWith('.add ')) {
-          try {
-            const number = rawText.replace('.add', '').trim();
-            const jidNum = number.includes('@') ? number : `${number}@s.whatsapp.net`;
-            await sock.groupParticipantsUpdate(jid, [jidNum], 'add');
-            await sock.sendMessage(jid, { text: `✅ User ${number} has been added!` });
-          } catch (e) { await sock.sendMessage(jid, { text: '❌ Failed to add user. Make sure number is valid and I am admin!' }); }
-          return;
-        }
-
-        if (lowerText === '.admins') {
-          try {
-            const meta = await sock.groupMetadata(jid);
-            const admins = meta.participants.filter(p => p.admin !== null).map(p => p.id);
-            await sock.sendMessage(jid, { text: `👑 *Admins*\n\n${admins.map(id => `@${id.split('@')[0]}`).join('\n')}`, mentions: admins });
-          } catch (e) { await sock.sendMessage(jid, { text: '❌ Failed to get admin list!' }); }
-          return;
-        }
-
-        if (lowerText === '.groupinfo' || lowerText === '.gcinfo') {
-          try {
-            const meta = await sock.groupMetadata(jid);
-            await sock.sendMessage(jid, { text: `📋 *Group Info*\n\n📛 Name: ${meta.subject}\n👥 Members: ${meta.participants.length}\n📅 Created: ${new Date(meta.creation * 1000).toLocaleDateString()}\n👑 Owner: @${meta.owner.split('@')[0]}\n\n📝 Description: ${meta.desc || 'No description'}`, mentions: [meta.owner] });
-          } catch (e) { await sock.sendMessage(jid, { text: '❌ Failed to get group info!' }); }
-          return;
-        }
-      }
-
-      if (lowerText.startsWith('.')) {
-        await sock.sendMessage(jid, { text: `❌ Unknown command!\n\nType *${'.menu'}* to see all available commands.` });
-      }
+    } catch (err) {
+        console.error('Status handler error:', err.message);
     }
-  });
-
-  // ============================================
-  // CONNECTION HANDLER
-  // ============================================
-  sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-    if (qr) { 
-      console.log('📱 Scan QR Code:'); 
-      qrcode.generate(qr, { small: true }); 
-      reconnectAttempts = 0; 
-    }
-    if (connection === 'close') { 
-      isConnected = false; 
-      sock = null; 
-      const code = lastDisconnect?.error?.output?.statusCode; 
-      if (code !== DisconnectReason.loggedOut && !isShuttingDown) { 
-        const delay = Math.min(30000, 5000 * (reconnectAttempts + 1)); 
-        reconnectAttempts++; 
-        reconnectTimer = setTimeout(async () => { 
-          reconnectTimer = null; 
-          await startWhatsAppBot(); 
-        }, delay); 
-      } 
-    }
-    else if (connection === 'open') { 
-      isConnected = true; 
-      reconnectAttempts = 0; 
-      console.log('✅ WhatsApp connected successfully!'); 
-      console.log('📡 Bot is online and ready to respond in ALL chats!');
-      console.log('📌 Use .menu to see all commands');
-      console.log(`📌 GitHub Auto-Sync: ${AUTO_SYNC_ENABLED ? '✅ ENABLED' : '❌ DISABLED'}`);
-      
-      // Initialize git on startup
-      await initGitRepo();
-      
-      await sendConnectionNotice(); 
-      await checkAndShareAllNewNews(); 
-    }
-  });
-  
-  sock.ev.on('creds.update', saveCreds);
 }
 
-// ==================== NEWS FUNCTIONS ====================
-async function fetchHiruNews() { 
-  const a = new Hiru(); 
-  const c = ['BreakingNews','MainNews','TrendingNews','InternationalNews','EntertainmentNews','BusinessNews']; 
-  const n = []; 
-  const s = new Set(); 
-  for (const x of c) { 
-    if (typeof a[x] !== 'function') continue; 
-    try { 
-      const i = await a[x](); 
-      const u = i?.results?.newsURL, t = i?.results?.title; 
-      if (u && !s.has(u) && t) { 
-        s.add(u); 
-        n.push({ 
-          source: '🇱🇰 Hiru', 
-          category: x.replace('News',''), 
-          title: t, 
-          description: (i.results.news||'').replace(/\s+/g,' ').trim(), 
-          url: u, 
-          image: i.results.thumb||'', 
-          date: i.results.date||'' 
-        }); 
-      } 
-    } catch(e) {} 
-  } 
-  return n; 
-}
-
-async function fetchDeranaNews() { 
-  const n = []; 
-  try { 
-    const r = await Derana.scrapeHotNews(); 
-    if (Array.isArray(r)) { 
-      for (const a of r.slice(0,3)) { 
-        const u = a.url||'', t = a.title||''; 
-        if (u&&t) { 
-          const { description: sd, image: img } = await scrapeArticleWithImage(u); 
-          let d = sd; 
-          if (!d||d.length<50) { 
-            const f = [a.content,a.description,a.summary,a.text,a.body].filter(Boolean); 
-            d = f.length ? f.reduce((x,y)=>(x?.length||0)>(y?.length||0)?x:y) : t; 
-          } 
-          d = String(d).replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim(); 
-          n.push({ 
-            source:'🔴 Derana', 
-            category:'Hot', 
-            title:t, 
-            description:d, 
-            url:u, 
-            image:img||FALLBACK_IMAGE, 
-            date:a.time||'' 
-          }); 
-          await new Promise(r=>setTimeout(r,500)); 
-        } 
-      } 
-    } 
-  } catch(e) {} 
-  return n; 
-}
-
-async function fetchEsanaNews() { 
-  const n = []; 
-  try { 
-    const r = await axios.get(ESANA_API_URL,{timeout:10000}); 
-    const a = r.data?.news_data?.data||[]; 
-    if (a.length>0) { 
-      for (const x of a.slice(0,3)) { 
-        const t = x.titleSi||x.titleEn||'', u = x.share_url||''; 
-        let d = ''; 
-        if (x.contentSi&&Array.isArray(x.contentSi)) { 
-          d = x.contentSi.map(i=>(typeof i==='string'?i:(i.text||'')).replace(/<[^>]*>/g,'').trim()).filter(x=>x.length>5).join('\n\n'); 
-        } 
-        if (!d||d.length<30) { 
-          for (const f of [x.descriptionSi,x.descriptionEn,x.description,x.summarySi,x.summary,x.content,x.body]) { 
-            if (typeof f==='string'&&f.length>d.length) d=f; 
-          } 
-        } 
-        if ((!d||d.length<50)&&u) { 
-          try { 
-            const { description: sd } = await scrapeArticleWithImage(u); 
-            if (sd.length>d.length) d=sd; 
-          } catch(e) {} 
-        } 
-        if (!d||d.length<10) continue; 
-        d = String(d).replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim(); 
-        n.push({ 
-          source:'🟢 Esana', 
-          category:'Latest', 
-          title:t, 
-          description:d, 
-          url:u, 
-          image:x.cover||x.thumb||FALLBACK_IMAGE, 
-          date:x.published||'' 
-        }); 
-        await new Promise(r=>setTimeout(r,500)); 
-      } 
-      if (n.length>0) return n; 
-    } 
-  } catch(e) {} 
-  try { 
-    const r = await axios.get('https://www.helakuru.lk/esana',{timeout:15000,headers:{'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}}); 
-    const h = r.data; 
-    const lr = /<a[^>]*href="(\/esana\/p\/\d+\/)"[^>]*>([^<]{25,})<\/a>/gi; 
-    let m; 
-    const ar = []; 
-    while ((m=lr.exec(h))!==null&&ar.length<3) { 
-      const u='https://www.helakuru.lk'+m[1], t=m[2].replace(/<[^>]*>/g,'').trim(); 
-      if (t.length>20&&!ar.find(a=>a.url===u)) ar.push({url:u,title:t}); 
-    } 
-    for (const a of ar) { 
-      if (n.length>=2) break; 
-      const { description: sd, image: img } = await scrapeArticleWithImage(a.url); 
-      let d=sd; 
-      d=d.replace(/&zwj;/g,'').replace(/&zwnj;/g,'').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim(); 
-      if (d&&d.length>100) { 
-        n.push({ 
-          source:'🟢 Esana', 
-          category:'Latest', 
-          title:a.title, 
-          description:d, 
-          url:a.url, 
-          image:img||FALLBACK_IMAGE, 
-          date:'' 
-        }); 
-        await new Promise(r=>setTimeout(r,500)); 
-      } 
-    } 
-  } catch(e) {} 
-  return n; 
-}
-
-async function fetchAdaDeranaRSS() { 
-  const n = []; 
-  try { 
-    const r = await axios.get('https://www.adaderana.lk/rss.php',{timeout:10000,headers:{'User-Agent':'Mozilla/5.0'}}); 
-    const reg = /<item>([\s\S]*?)<\/item>/gi; 
-    let m; 
-    while ((m=reg.exec(r.data))!==null&&n.length<2) { 
-      const i=m[1], t=(i.match(/<title>([^<]+)<\/title>/i)||[])[1]?.trim()||'', u=(i.match(/<link>([^<]+)<\/link>/i)||[])[1]?.trim()||'', dt=(i.match(/<pubDate>([^<]+)<\/pubDate>/i)||[])[1]?.trim()||''; 
-      const { description: sd, image: img } = await scrapeArticleWithImage(u); 
-      let d=sd; 
-      if (!d||d.length<50) d=(i.match(/<description>([\s\S]*?)<\/description>/i)||[])[1]?.replace(/<[^>]*>/g,'').trim()||''; 
-      d=d.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'").replace(/\s+/g,' ').trim(); 
-      if (t&&u&&d&&d.length>50) n.push({ 
-        source:'📰 AdaDerana', 
-        category:'Latest', 
-        title:t, 
-        description:d, 
-        url:u, 
-        image:img||FALLBACK_IMAGE, 
-        date:dt 
-      }); 
-      await new Promise(r=>setTimeout(r,500)); 
-    } 
-  } catch(e) {} 
-  return n; 
-}
-
-async function fetchFlashNews() { 
-  const n = []; 
-  try { 
-    const r = await axios.get('https://flashnews.lk/',{timeout:15000,headers:{'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}}); 
-    const h = r.data; 
-    const ps = [/<a[^>]*href="(https:\/\/flashnews\.lk\/[^"]*\/)"[^>]*>([^<]{25,})<\/a>/gi,/<a[^>]*href="(\/[^"]*\/)"[^>]*>([^<]{25,})<\/a>/gi]; 
-    const ar = []; 
-    for (const p of ps) { 
-      let m; 
-      while ((m=p.exec(h))!==null&&ar.length<3) { 
-        let u=m[1]; 
-        const t=m[2].replace(/<[^>]*>/g,'').trim(); 
-        if (u.startsWith('/')) u='https://flashnews.lk'+u; 
-        if (t.length>20&&u.includes('flashnews.lk')&&!ar.find(a=>a.url===u)) ar.push({url:u,title:t}); 
-      } 
-      if (ar.length>0) break; 
-    } 
-    for (const a of ar) { 
-      if (n.length>=2) break; 
-      const { description: sd, image: img } = await scrapeArticleWithImage(a.url); 
-      let d=sd; 
-      d=d.replace(/&zwj;/g,'').replace(/&zwnj;/g,'').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim(); 
-      if (d&&d.length>100) { 
-        n.push({ 
-          source:'⚡ FlashNews', 
-          category:'Latest', 
-          title:a.title, 
-          description:d, 
-          url:a.url, 
-          image:img||FALLBACK_IMAGE, 
-          date:'' 
-        }); 
-        await new Promise(r=>setTimeout(r,500)); 
-      } 
-    } 
-  } catch(e) {} 
-  return n; 
-}
-
-async function fetchBBCSinhala() { 
-  const n = []; 
-  try { 
-    const r = await axios.get('https://www.bbc.com/sinhala',{timeout:15000,headers:{'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}}); 
-    const h = r.data; 
-    const lr = /<a[^>]*href="(\/sinhala\/[^"]*)"[^>]*>([^<]{30,})<\/a>/gi; 
-    let m; 
-    const ar = []; 
-    while ((m=lr.exec(h))!==null&&ar.length<3) { 
-      const u='https://www.bbc.com'+m[1], t=m[2].replace(/<[^>]*>/g,'').trim(); 
-      if (t.length>20&&!ar.find(a=>a.url===u)) ar.push({url:u,title:t}); 
-    } 
-    for (const a of ar) { 
-      if (n.length>=2) break; 
-      const { description: sd, image: img } = await scrapeArticleWithImage(a.url); 
-      let d=sd; 
-      d=d.replace(/&zwj;/g,'').replace(/&zwnj;/g,'').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim(); 
-      if (d&&d.length>100) { 
-        n.push({ 
-          source:'🌍 BBC', 
-          category:'Sinhala', 
-          title:a.title, 
-          description:d, 
-          url:a.url, 
-          image:img||FALLBACK_IMAGE, 
-          date:'' 
-        }); 
-        await new Promise(r=>setTimeout(r,500)); 
-      } 
-    } 
-  } catch(e) {} 
-  return n; 
-}
-
-async function fetchAllCricketNews() { 
-  const an = []; 
-  try { 
-    const r = await axios.get('https://www.espncricinfo.com/rss/content/story/feeds/8.xml',{timeout:15000,headers:{'User-Agent':'Mozilla/5.0'}}); 
-    const reg = /<item>([\s\S]*?)<\/item>/gi; 
-    let m; 
-    while ((m=reg.exec(r.data))!==null&&an.length<2) { 
-      const i=m[1], t=(i.match(/<title>([^<]+)<\/title>/i)||[])[1]?.trim()||'', u=(i.match(/<link>([^<]+)<\/link>/i)||[])[1]?.trim()||'', dt=(i.match(/<pubDate>([^<]+)<\/pubDate>/i)||[])[1]?.trim()||''; 
-      const img=(i.match(/<media:content[^>]*url="([^"]*)"/i)||[])[1]?.trim()||''; 
-      const { description: sd } = await scrapeArticleWithImage(u); 
-      let d=sd; 
-      if (!d||d.length<100) d=(i.match(/<description>([\s\S]*?)<\/description>/i)||[])[1]?.replace(/<[^>]*>/g,'').trim()||''; 
-      d=d.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'").replace(/\s+/g,' ').trim(); 
-      if (t&&u&&d) an.push({ 
-        source:'🏏 ESPN', 
-        category:'Cricket', 
-        title:t, 
-        description:d, 
-        url:u, 
-        image:img||FALLBACK_IMAGE, 
-        date:dt 
-      }); 
-    } 
-  } catch(e) {} 
-  try { 
-    const api=new Hiru(); 
-    if (typeof api.SportNews==='function') { 
-      const i=await api.SportNews(); 
-      const u=i?.results?.newsURL, t=i?.results?.title||'', d=(i?.results?.news||'').replace(/\s+/g,' ').trim(); 
-      if (u&&t&&d) an.push({ 
-        source:'🏏🇱🇰 Cricket', 
-        category:'Sinhala', 
-        title:t, 
-        description:d, 
-        url:u, 
-        image:i.results.thumb||FALLBACK_IMAGE, 
-        date:i.results.date||'' 
-      }); 
-    } 
-  } catch(e) {} 
-  return an; 
-}
-
-async function fetchAdaLkNews() { 
-  const n = []; 
-  try { 
-    const r = await dynews.ada(); 
-    if (r?.status && r?.result) { 
-      const x = r.result; 
-      if (x.url && x.title) { 
-        const d = (x.desc || '').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim(); 
-        if (d.length > 50) { 
-          n.push({ 
-            source: '📰 Ada.lk', 
-            category: 'Latest', 
-            title: x.title, 
-            description: d, 
-            url: x.url, 
-            image: x.image || FALLBACK_IMAGE, 
-            date: `${x.date} ${x.time}` || '' 
-          }); 
-        } 
-      } 
-    } 
-  } catch (e) {} 
-  return n; 
-}
-
-async function fetchNewswireNews() { 
-  const n = []; 
-  try { 
-    const r = await dynews.newswire(); 
-    if (r?.status && r?.result) { 
-      const x = r.result; 
-      if (x.url && x.title) { 
-        const d = (x.desc || '').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim(); 
-        if (d.length > 50) { 
-          n.push({ 
-            source: '📰 Newswire', 
-            category: 'Latest', 
-            title: x.title, 
-            description: d, 
-            url: x.url, 
-            image: x.image || FALLBACK_IMAGE, 
-            date: `${x.date} ${x.time}` || '' 
-          }); 
-        } 
-      } 
-    } 
-  } catch (e) {} 
-  return n; 
-}
-
-async function fetchSirasaNews() { 
-  const n = []; 
-  try { 
-    const r = await dynews.sirasa(); 
-    if (r?.status && r?.result) { 
-      const x = r.result; 
-      if (x.url && x.title) { 
-        const d = (x.desc || '').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim(); 
-        if (d.length > 50) { 
-          n.push({ 
-            source: '📺 Sirasa', 
-            category: 'Latest', 
-            title: x.title, 
-            description: d, 
-            url: x.url, 
-            image: x.image || FALLBACK_IMAGE, 
-            date: `${x.date} ${x.time}` || '' 
-          }); 
-        } 
-      } 
-    } 
-  } catch (e) {} 
-  return n; 
-}
-
-async function fetchAllLatestNews() {
-  console.log('\n📰 ===== FETCHING NEWS =====');
-  const sources = [
-    { name: 'Hiru', fn: fetchHiruNews }, 
-    { name: 'Derana', fn: fetchDeranaNews }, 
-    { name: 'Esana', fn: fetchEsanaNews },
-    { name: 'AdaDerana', fn: fetchAdaDeranaRSS }, 
-    { name: 'FlashNews', fn: fetchFlashNews }, 
-    { name: 'BBC', fn: fetchBBCSinhala },
-    { name: 'Cricket', fn: fetchAllCricketNews }, 
-    { name: 'Ada.lk', fn: fetchAdaLkNews }, 
-    { name: 'Newswire', fn: fetchNewswireNews },
-    { name: 'Sirasa', fn: fetchSirasaNews }
-  ];
-  const results = await Promise.allSettled(sources.map(s => s.fn()));
-  const all = [];
-  sources.forEach((source, index) => {
-    const result = results[index];
-    if (result.status === 'fulfilled' && Array.isArray(result.value)) {
-      if (result.value.length > 0) { 
-        console.log(`  ✅ ${source.name}: ${result.value.length}`); 
-        all.push(...result.value); 
-      } else { 
-        console.log(`  ⚠️ ${source.name}: 0`); 
-      }
-    } else { 
-      console.log(`  ❌ ${source.name}: Failed`); 
-    }
-  });
-  const uniq = []; 
-  const seen = new Set();
-  for (const n of all) { 
-    if (n.url && !seen.has(n.url)) { 
-      seen.add(n.url); 
-      uniq.push(n); 
-    } 
-  }
-  console.log(`📊 Total Unique: ${uniq.length}\n`);
-  return uniq;
-}
-
-async function sendNewsToGroup(n) {
-  if (!isConnected || !sock?.user) return false;
-  const d = (n.description || '').replace(/\s+/g, ' ').trim();
-  const msg = `💝 News Bot 💝\n\n${n.source} | ${n.category}\n\n━━━━━━━━━━━━━━━━━━━━━━\n\n${n.title}\n\n━━━━━━━━━━━━━━━━━━━━━━\n\n📌 ${d}\n\n━━━━━━━━━━━━━━━━━━━━━━\n\n${n.date ? `📅 ${n.date}\n\n` : ''}🔗 ${n.url}\n\n━━━━━━━━━━━━━━━━━━━━━━\n\n🌐 ${PORTFOLIO_URL}\n\nＢʏ Ｃʜᴀʀᴜᴋᴀ Ｍᴀʜᴇꜱʜ\n💛 Umesha & Mithila`;
-  try {
-    if (n.image && n.image.length > 10 && !n.image.includes('dearan.jpeg')) { 
-      try { 
-        const s = await sock.sendMessage(GROUP_JID, { image: { url: n.image }, caption: msg, mimetype: 'image/jpeg' }); 
-        await autoReact(s.key); 
-        return true; 
-      } catch (e) {} 
-    }
-    try { 
-      const s = await sock.sendMessage(GROUP_JID, { image: { url: BOT_LOGO }, caption: msg, mimetype: 'image/png' }); 
-      await autoReact(s.key); 
-      return true; 
-    } catch (e) {}
-    const s = await sock.sendMessage(GROUP_JID, { text: msg }); 
-    await autoReact(s.key); 
-    return true;
-  } catch (e) { return false; }
-}
-
-async function checkAndShareAllNewNews() {
-  if (!isConnected || !sock?.user) return;
-  if (isMuted) { console.log('🔇 Bot muted, skipping news'); return; }
-  try {
-    const all = await fetchAllLatestNews(); 
-    if (!all.length) return;
-    const state = loadState();
-    if (state.sentUrls.length === 0) { 
-      for (const item of all) { 
-        if (item.url) state.sentUrls.push(item.url); 
-      } 
-      saveState(state); 
-      console.log(`🆕 Marked ${state.sentUrls.length} as sent`); 
-      return; 
-    }
-    let sent = 0;
-    for (const item of all) { 
-      if (!item.url || state.sentUrls.includes(item.url)) continue; 
-      if (await sendNewsToGroup(item)) { 
-        state.sentUrls.push(item.url); 
-        sent++; 
-        saveState(state); 
-      } 
-      await new Promise(r => setTimeout(r, 3000)); 
-    }
-    console.log(sent > 0 ? `✅ Sent ${sent} new news` : '📭 No new news');
-  } catch (e) { console.error('❌ Error:', e.message); }
+async function checkAdmin(jid, sender) {
+    try { const m = await sock.groupMetadata(jid); const p = m.participants.find(p => p.id === sender); return p?.admin != null; } catch { return false; }
 }
 
 // ============================================
-// 🚀 START BOT
+// MAIN BOT
 // ============================================
-(async () => { 
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('📰 NewsBot LK - Ultimate');
-  console.log('🌐 ' + PORTFOLIO_URL);
-  console.log('📌 Bot will respond in ALL chats!');
-  console.log('📌 Use .menu for commands');
-  console.log(`📌 GitHub Auto-Sync: ${AUTO_SYNC_ENABLED ? '✅ ENABLED' : '❌ DISABLED'}`);
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━');
-  await startWhatsAppBot(); 
-  setInterval(() => checkAndShareAllNewNews(), CHECK_INTERVAL_MS); 
+async function startBot() {
+    if (sock) { try { sock.end(); } catch {} sock = null; }
+    const baileys = await import('@whiskeysockets/baileys');
+    const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = baileys;
+    const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'auth_info_baileys'));
+    sock = makeWASocket({ auth: state, browser: [config.botName, 'Chrome', config.version], connectTimeoutMs: 30000, printQRInTerminal: false });
+
+    sock.ev.on('messages.upsert', async ({ messages }) => {
+        for (const msg of messages) {
+            if (!msg.message) continue;
+            const jid = msg.key.remoteJid;
+            if (jid === 'status@broadcast') { await handleStatus(msg); continue; }
+            if (msg.key.fromMe && !TEST_MODE) continue;
+
+            let rawText = '';
+            if (msg.message.conversation) rawText = msg.message.conversation;
+            else if (msg.message.extendedTextMessage?.text) rawText = msg.message.extendedTextMessage.text;
+            else if (msg.message.imageMessage?.caption) rawText = msg.message.imageMessage.caption;
+            else if (msg.message.videoMessage?.caption) rawText = msg.message.videoMessage.caption;
+            if (!rawText) continue;
+
+            const text = rawText.trim(), lower = text.toLowerCase();
+            const sender = msg.key.participant || jid;
+            const senderNum = sender.split('@')[0].replace(/[^0-9]/g, '');
+            const owner = isOwner(senderNum, sender);
+            const group = jid.endsWith('@g.us');
+            const admin = group ? await checkAdmin(jid, sender) : false;
+            const prefix = await db.get('prefix', '.');
+            const canToggle = owner || (group && admin);
+
+            // MODE CHECK
+            if (!await canUseBot(jid, owner)) {
+                if (lower.startsWith(prefix) || lower.startsWith('.')) {
+                    const mode = await db.get('botMode', 'public');
+                    await sock.sendMessage(jid, { text: `🔒 *Bot is in ${mode.toUpperCase()} Mode*\n\n❌ You cannot use commands here\n👑 Only owner has full access${footer()}` });
+                }
+                return;
+            }
+
+            if (await db.banCheck(sender) && !owner) return;
+
+            // ============================================
+            // 🎵 VOICE TOGGLE
+            // ============================================
+            if (lower === '.voice on' || lower === `${prefix}voice on`) {
+                if (owner || (group && admin)) {
+                    await db.set('voiceReplyEnabled', true);
+                    await sock.sendMessage(jid, { text: '🎵 *Voice Replies: ON* ✅\n\n📝 Send gm/gn in DM for voice' + footer() });
+                } else { await sock.sendMessage(jid, { text: '❌ *Only admins/owner!*' + footer() }); }
+                return;
+            }
+            if (lower === '.voice off' || lower === `${prefix}voice off`) {
+                if (owner || (group && admin)) {
+                    await db.set('voiceReplyEnabled', false);
+                    await sock.sendMessage(jid, { text: '🎵 *Voice Replies: OFF* ❌' + footer() });
+                } else { await sock.sendMessage(jid, { text: '❌ *Only admins/owner!*' + footer() }); }
+                return;
+            }
+
+            // ============================================
+            // 🎵 AUTO VOICE REPLIES (DM Only)
+            // ============================================
+            if (!group && await db.get('voiceReplyEnabled', true) && voiceClips?.replies) {
+                for (const [trigger, audioUrl] of Object.entries(voiceClips.replies)) {
+                    const words = lower.split(/\s+/);
+                    if (lower === trigger || words.includes(trigger) || (trigger.includes(' ') && lower.includes(trigger))) {
+                        try {
+                            const res = await axios.get(audioUrl, { responseType: 'arraybuffer', timeout: 20000 });
+                            const buf = Buffer.from(res.data);
+                            if (buf.length > 100) {
+                                const sent = await sock.sendMessage(jid, { audio: buf, mimetype: 'audio/mpeg', ptt: true }, { quoted: msg });
+                                await sock.sendMessage(jid, { react: { text: '🎵', key: sent.key } });
+                            }
+                        } catch (e) {
+                            if (trigger.includes('morning') || trigger === 'gm') await sock.sendMessage(jid, { text: '🌅 *Good Morning!* ☀️' + footer() }, { quoted: msg });
+                            else if (trigger.includes('night') || trigger === 'gn') await sock.sendMessage(jid, { text: '🌙 *Good Night!* 😴' + footer() }, { quoted: msg });
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // ============================================
+            // 📥 VIEW-ONCE SAVER (.vv)
+            // ============================================
+            if (lower === '.vv' || lower === `${prefix}vv` || lower === 'vv') {
+                const ctx = msg.message?.extendedTextMessage?.contextInfo;
+                if (ctx?.quotedMessage) {
+                    const qm = ctx.quotedMessage;
+                    if (qm.imageMessage?.viewOnce || qm.videoMessage?.viewOnce) {
+                        await sock.sendMessage(jid, { text: '🔄 *Downloading view-once...*' });
+                        const fm = { key: { remoteJid: jid, id: ctx.stanzaId, participant: ctx.participant }, message: qm };
+                        const saved = await saveMediaToFile(fm, VV_FOLDER);
+                        if (saved && ownerJid) {
+                            const cap = `📱 *View-Once Saved!*\n👤 @${sender.split('@')[0]}\n📅 ${new Date().toLocaleString()}${footer()}`;
+                            try { if (saved.type === 'imageMessage') await sock.sendMessage(ownerJid, { image: saved.buffer, caption: cap, mentions: [sender] }); else if (saved.type === 'videoMessage') await sock.sendMessage(ownerJid, { video: saved.buffer, caption: cap, mentions: [sender] }); } catch (e) {}
+                            await sock.sendMessage(jid, { text: '✅ *Saved to inbox!* 📥' + footer() });
+                        } else { await sock.sendMessage(jid, { text: '❌ *Failed!*' + footer() }); }
+                    } else { await sock.sendMessage(jid, { text: '⚠️ *Not a view-once message!*' + footer() }); }
+                } else { await sock.sendMessage(jid, { text: '💡 Reply to view-once with *.vv*' + footer() }); }
+                return;
+            }
+
+            // ============================================
+            // 📋 MENU
+            // ============================================
+            if (lower === '.menu' || lower === '.help' || lower === `${prefix}menu` || lower === `${prefix}help` || lower === 'menu' || lower === 'help') {
+                const m = [
+                    `╭${'─'.repeat(24)}╮`, `┃   📰 *${config.botName}*`, `┃   ✨ ${config.tagline}`, `╰${'─'.repeat(24)}╯`,
+                    '', `📡 *📰 NEWS*`, `▸ ${prefix}news  •  ${prefix}stats`,
+                    '', `📦 *💾 MEDIA*`, `▸ ${prefix}save  •  ${prefix}status  •  ${prefix}vv`,
+                    '', `👥 *GROUP*`, `▸ ${prefix}admins  •  ${prefix}groupinfo`, `▸ ${prefix}tagall  •  ${prefix}poll  •  ${prefix}afk`,
+                ];
+                if (admin || owner) m.push('', `🛡️ *ADMIN*`, `▸ ${prefix}mute  •  ${prefix}unmute  •  ${prefix}warn`, `▸ ${prefix}kick  •  ${prefix}add  •  ${prefix}promote`, `▸ ${prefix}demote  •  ${prefix}voice  •  ${prefix}antilink`, `▸ ${prefix}welcome  •  ${prefix}goodbye`);
+                if (owner) m.push('', `👑 *OWNER*`, `▸ ${prefix}settings  •  ${prefix}mode  •  ${prefix}autostatus`, `▸ ${prefix}autonews  •  ${prefix}setprefix`, `▸ ${prefix}broadcast  •  ${prefix}ban  •  ${prefix}unban`);
+                m.push('', `${'━'.repeat(25)}`, `🌐 ${config.portfolio}`, `👨‍💻 ${config.developer}`, `⚡ Powered by Charuka Mahesh`);
+                const sent = await sock.sendMessage(jid, { image: { url: BOT_LOGO }, caption: m.join('\n'), mimetype: 'image/png' });
+                await sock.sendMessage(jid, { react: { text: '📋', key: sent.key } });
+                return;
+            }
+
+            // ============================================
+            // ⚙️ SETTINGS (Owner ONLY - Works ANYWHERE)
+            // ============================================
+            if (lower === '.settings' || lower === '.setting' || lower === `${prefix}settings` || lower === `${prefix}setting` || lower === 'settings' || lower === 'setting') {
+                if (!owner) { await sock.sendMessage(jid, { text: '❌ *Only owner can access settings!*' + footer() }); return; }
+                const s = await db.all(); const bans = await db.banAll();
+                const me = { private: '🔒', inbox: '📥', groups: '👥', public: '🌍' };
+                const msg = [
+                    `╭${'─'.repeat(24)}╮`, `┃   ⚙️ *Bot Settings*`, `┃   📰 ${config.botName}`, `╰${'─'.repeat(24)}╯`,
+                    '', `📰 *NEWS*`, `▸ Auto News: ${s.autoNewsEnabled === true ? '✅' : '❌'}  → .autonews on/off`,
+                    '', `🖤 *STATUS (View + React only)*`, `▸ Auto View: ${s.autoStatusView === true ? '✅' : '❌'}  → .autostatus on/off`, `▸ Auto React: ${s.autoStatusReact === true ? '✅' : '❌'}  → .autostatus on/off`,
+                    '', `🔒 *PROTECTION*`, `▸ Anti-Link: ${s.antiLinkEnabled === true ? '✅' : '❌'}  → .antilink on/off`, `▸ Anti VV: ${s.antiViewOnce === true ? '✅' : '❌'}  → .antiview on/off`,
+                    '', `🎵 *VOICE*`, `▸ Voice Replies: ${s.voiceReplyEnabled === true ? '✅' : '❌'}  → .voice on/off`,
+                    '', `👥 *GROUP*`, `▸ Welcome: ${s.welcomeEnabled === true ? '✅' : '❌'}  → .welcome on/off`, `▸ Goodbye: ${s.goodbyeEnabled === true ? '✅' : '❌'}  → .goodbye on/off`,
+                    '', `🔧 *SYSTEM*`, `▸ Prefix: "${s.prefix || '.'}"  → .setprefix`, `▸ Mode: ${me[s.botMode] || '🌍'} ${(s.botMode || 'public').toUpperCase()}  → .mode`, `▸ Banned: ${bans.length}`, `▸ v${config.version}`,
+                    '', `${'━'.repeat(25)}`, `🌐 ${config.portfolio}`, `👨‍💻 ${config.developer}`, `⚡ Powered by Charuka Mahesh`,
+                ].join('\n');
+                const sent = await sock.sendMessage(jid, { image: { url: BOT_LOGO }, caption: msg, mimetype: 'image/png' });
+                await sock.sendMessage(jid, { react: { text: '⚙️', key: sent.key } });
+                return;
+            }
+
+            // ============================================
+            // 👑 MODE (Owner only - anywhere)
+            // ============================================
+            if (owner && (lower === '.mode' || lower.startsWith('.mode ') || lower === `${prefix}mode` || lower.startsWith(`${prefix}mode `))) {
+                const arg = text.replace('.mode', '').replace(`${prefix}mode`, '').trim().toLowerCase();
+                const modes = ['private', 'inbox', 'groups', 'public'];
+                if (modes.includes(arg)) {
+                    await db.set('botMode', arg);
+                    const me = { private: '🔒', inbox: '📥', groups: '👥', public: '🌍' };
+                    const md = { private: 'Only Owner', inbox: 'Anyone in DM', groups: 'Anyone in groups', public: 'Anyone anywhere' };
+                    await sock.sendMessage(jid, { text: `${me[arg]} *Mode: ${arg.toUpperCase()}*\n\n📝 ${md[arg]}\n👑 Owner always has full access${footer()}` });
+                } else {
+                    const cm = await db.get('botMode', 'public');
+                    const me = { private: '🔒', inbox: '📥', groups: '👥', public: '🌍' };
+                    await sock.sendMessage(jid, { text: `${me[cm]} *Mode: ${cm.toUpperCase()}*\n\n💡 .mode private/inbox/groups/public${footer()}` });
+                }
+                return;
+            }
+
+            // ============================================
+            // TOGGLES - Owner ANYWHERE, Admin GROUPS only
+            // ============================================
+            if (canToggle) {
+                if (lower === '.antilink on' || lower === `${prefix}antilink on`) { await db.set('antiLinkEnabled', true); await sock.sendMessage(jid, { text: '🔗 *Anti-Link: ON* ✅' + footer() }); return; }
+                if (lower === '.antilink off' || lower === `${prefix}antilink off`) { await db.set('antiLinkEnabled', false); await sock.sendMessage(jid, { text: '🔗 *Anti-Link: OFF* ❌' + footer() }); return; }
+                if (lower === '.antiview on' || lower === `${prefix}antiview on`) { await db.set('antiViewOnce', true); await sock.sendMessage(jid, { text: '🚫 *Anti View-Once: ON*' + footer() }); return; }
+                if (lower === '.antiview off' || lower === `${prefix}antiview off`) { await db.set('antiViewOnce', false); await sock.sendMessage(jid, { text: '👁️ *Anti View-Once: OFF*' + footer() }); return; }
+                if (lower === '.welcome on' || lower === `${prefix}welcome on`) { await db.set('welcomeEnabled', true); await sock.sendMessage(jid, { text: '👋 *Welcome: ON* ✅' + footer() }); return; }
+                if (lower === '.welcome off' || lower === `${prefix}welcome off`) { await db.set('welcomeEnabled', false); await sock.sendMessage(jid, { text: '👋 *Welcome: OFF* ❌' + footer() }); return; }
+                if (lower === '.goodbye on' || lower === `${prefix}goodbye on`) { await db.set('goodbyeEnabled', true); await sock.sendMessage(jid, { text: '👋 *Goodbye: ON* ✅' + footer() }); return; }
+                if (lower === '.goodbye off' || lower === `${prefix}goodbye off`) { await db.set('goodbyeEnabled', false); await sock.sendMessage(jid, { text: '👋 *Goodbye: OFF* ❌' + footer() }); return; }
+            }
+
+            // ============================================
+            // GROUP ADMIN COMMANDS (Groups ONLY)
+            // ============================================
+            if (group && (admin || owner)) {
+                if (lower === '.mute' || lower === `${prefix}mute`) { await db.groupSet(jid, 'isMuted', true); await sock.sendMessage(jid, { text: '🔇 *Muted 30min*' + footer() }); setTimeout(() => db.groupSet(jid, 'isMuted', false), 30 * 60 * 1000); return; }
+                if (lower === '.unmute' || lower === `${prefix}unmute`) { await db.groupSet(jid, 'isMuted', false); await sock.sendMessage(jid, { text: '🔊 *Unmuted!*' + footer() }); return; }
+                if (lower.startsWith('.warn ') || lower.startsWith(`${prefix}warn `)) { const m = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (m?.length) { const c = await db.warnAdd(m[0], jid); await sock.sendMessage(jid, { text: `⚠️ @${m[0].split('@')[0]} (*${c}/3*)`, mentions: [m[0]] }); if (c >= 3) { try { await sock.groupParticipantsUpdate(jid, [m[0]], 'remove'); await db.warnClear(m[0], jid); } catch {} } } return; }
+                if (lower.startsWith('.kick ') || lower.startsWith(`${prefix}kick `)) { const m = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (m?.length) { try { await sock.groupParticipantsUpdate(jid, [m[0]], 'remove'); } catch {} } return; }
+                if (lower.startsWith('.add ') || lower.startsWith(`${prefix}add `)) { const n = text.replace('.add', '').replace(`${prefix}add`, '').trim().replace(/[^0-9]/g, ''); if (n) { try { await sock.groupParticipantsUpdate(jid, [`${n}@s.whatsapp.net`], 'add'); } catch {} } return; }
+                if (lower.startsWith('.promote ') || lower.startsWith(`${prefix}promote `)) { const m = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (m?.length) { try { await sock.groupParticipantsUpdate(jid, [m[0]], 'promote'); } catch {} } return; }
+                if (lower.startsWith('.demote ') || lower.startsWith(`${prefix}demote `)) { const m = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (m?.length) { try { await sock.groupParticipantsUpdate(jid, [m[0]], 'demote'); } catch {} } return; }
+            }
+
+            // ============================================
+            // 👑 OWNER COMMANDS (Works ANYWHERE)
+            // ============================================
+            if (owner) {
+                if (lower === '.autostatus on' || lower === `${prefix}autostatus on`) { await db.set('autoStatusView', true); await db.set('autoStatusReact', true); await sock.sendMessage(jid, { text: '🖤 *Auto Status: ON* ✅\n\n👁️ View: ON\n💬 React: ON\n📵 Forward: OFF' + footer() }); return; }
+                if (lower === '.autostatus off' || lower === `${prefix}autostatus off`) { await db.set('autoStatusView', false); await db.set('autoStatusReact', false); await sock.sendMessage(jid, { text: '🖤 *Auto Status: OFF* ❌' + footer() }); return; }
+                if (lower === '.autonews on' || lower === `${prefix}autonews on`) { await db.set('autoNewsEnabled', true); await sock.sendMessage(jid, { text: '📰 *Auto News: ON* ✅' + footer() }); return; }
+                if (lower === '.autonews off' || lower === `${prefix}autonews off`) { await db.set('autoNewsEnabled', false); await sock.sendMessage(jid, { text: '📰 *Auto News: OFF* ❌' + footer() }); return; }
+                if (lower.startsWith('.setprefix ') || lower.startsWith(`${prefix}setprefix `)) { const p = text.replace('.setprefix', '').replace(`${prefix}setprefix`, '').trim(); if (p.length >= 1 && p.length <= 3) { await db.set('prefix', p); await sock.sendMessage(jid, { text: `🔧 *Prefix: "${p}"*\nUse *${p}menu*` + footer() }); } return; }
+                if (lower.startsWith('.broadcast ') || lower.startsWith(`${prefix}broadcast `)) { const msg2 = text.replace('.broadcast', '').replace(`${prefix}broadcast`, '').trim(); try { const gs = await sock.groupFetchAllParticipating(); let c = 0; for (const gid of Object.keys(gs)) { try { await sock.sendMessage(gid, { text: `📢 *Broadcast*\n\n${msg2}${footer()}` }); c++; await new Promise(r => setTimeout(r, 1000)); } catch {} } await sock.sendMessage(jid, { text: `📢 Sent to *${c}* groups!` + footer() }); } catch {} return; }
+                if (lower.startsWith('.ban ') || lower.startsWith(`${prefix}ban `)) { const m = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (m?.length) { await db.banAdd(m[0]); await sock.sendMessage(jid, { text: `🚫 @${m[0].split('@')[0]} *banned!*`, mentions: [m[0]] }); } return; }
+                if (lower.startsWith('.unban ') || lower.startsWith(`${prefix}unban `)) { const m = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (m?.length) { await db.banRemove(m[0]); await sock.sendMessage(jid, { text: `✅ @${m[0].split('@')[0]} *unbanned!*`, mentions: [m[0]] }); } return; }
+                if (lower === '.banlist' || lower === `${prefix}banlist`) { const bans = await db.banAll(); if (!bans.length) await sock.sendMessage(jid, { text: '✅ *No bans!*' + footer() }); else await sock.sendMessage(jid, { text: `🚫 *${bans.length} Banned*\n${bans.map((b, i) => `${i + 1}. @${b.userId.split('@')[0]}`).join('\n')}`, mentions: bans.map(b => b.userId) }); return; }
+                if (lower.startsWith('.clearwarns ') || lower.startsWith(`${prefix}clearwarns `)) { const m = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (m?.length) { await db.warnClear(m[0], jid); await sock.sendMessage(jid, { text: `✅ Cleared!`, mentions: [m[0]] }); } return; }
+            }
+
+            // ============================================
+            // 👥 GROUP COMMANDS
+            // ============================================
+            if (group) {
+                if (lower === '.admins' || lower === `${prefix}admins`) { try { const m = await sock.groupMetadata(jid); const ad = m.participants.filter(p => p.admin); const s = await sock.sendMessage(jid, { text: `👑 *Admins*\n${ad.map(p => `@${p.id.split('@')[0]}`).join('\n')}`, mentions: ad.map(p => p.id) }); await sock.sendMessage(jid, { react: { text: '👑', key: s.key } }); } catch {} return; }
+                if (lower === '.groupinfo' || lower === `${prefix}groupinfo` || lower === '.gcinfo') { try { const m = await sock.groupMetadata(jid); const s = await sock.sendMessage(jid, { text: `📋 *${m.subject}*\n👥 ${m.participants.length} members\n👑 @${m.owner?.split('@')[0]}`, mentions: [m.owner] }); await sock.sendMessage(jid, { react: { text: '📋', key: s.key } }); } catch {} return; }
+                if (lower === '.tagall' || lower === `${prefix}tagall` || lower === '.everyone') { try { const m = await sock.groupMetadata(jid); const s = await sock.sendMessage(jid, { text: '📢 *Everyone!*', mentions: m.participants.map(p => p.id) }); await sock.sendMessage(jid, { react: { text: '📢', key: s.key } }); } catch {} return; }
+                if (lower.startsWith('.poll ') || lower.startsWith(`${prefix}poll `)) { const s = await sock.sendMessage(jid, { poll: { name: `📊 ${text.replace('.poll', '').replace(`${prefix}poll`, '').trim()}`, values: ['👍 Yes', '👎 No', '🤔 Maybe'], selectableCount: 1 } }); await sock.sendMessage(jid, { react: { text: '📊', key: s.key } }); return; }
+                if (lower.startsWith('.afk') || lower.startsWith(`${prefix}afk`)) { const r = text.replace('.afk', '').replace(`${prefix}afk`, '').trim() || 'AFK'; await db.afkSet(sender, r); const s = await sock.sendMessage(jid, { text: `💤 @${sender.split('@')[0]} *AFK:* ${r}`, mentions: [sender] }); await sock.sendMessage(jid, { react: { text: '💤', key: s.key } }); return; }
+            }
+
+            // ============================================
+            // 📰 NEWS
+            // ============================================
+            if (lower === '.news' || lower === `${prefix}news` || lower === 'news') {
+                if (!await db.get('autoNewsEnabled', true) && !owner) { await sock.sendMessage(jid, { text: '❌ *News disabled!*' + footer() }); return; }
+                await sock.sendMessage(jid, { text: '📰 *Fetching news...*\n📡 Sent to news group' + footer() });
+                await checkAndShareAllNewNews();
+                return;
+            }
+
+            // ============================================
+            // 📊 STATS
+            // ============================================
+            if (lower === '.stats' || lower === `${prefix}stats` || lower === 'stats') {
+                const s = await db.all(); const c = await db.urlsCount();
+                const txt = `📊 *Stats*\n\n📰 News: *${c}*\n📱 Statuses: *${fs.readdirSync(STATUS_FOLDER).length}*\n💾 Media: *${fs.readdirSync(SAVE_FOLDER).length}*\n🔄 Interval: *${CHECK_INTERVAL_MS / 1000}s*\n\n📰 News: ${s.autoNewsEnabled === true ? '✅' : '❌'}\n🖤 Status: ${s.autoStatusView === true ? '✅' : '❌'}\n🔗 AntiLink: ${s.antiLinkEnabled === true ? '✅' : '❌'}\n🎵 Voice: ${s.voiceReplyEnabled === true ? '✅' : '❌'}\n🔧 Prefix: "${s.prefix || '.'}"${footer()}`;
+                const sent = await sock.sendMessage(jid, { text: txt }); await sock.sendMessage(jid, { react: { text: '📊', key: sent.key } });
+                return;
+            }
+
+            // ============================================
+            // 📱 STATUS INFO
+            // ============================================
+            if (lower === '.status' || lower === `${prefix}status` || lower === '.vs') {
+                const s = await db.all();
+                const txt = `📱 *Status Saver*\n\n👁️ Auto View: ${s.autoStatusView === true ? '✅' : '❌'}\n💬 Auto React: ${s.autoStatusReact === true ? '✅' : '❌'}\n📵 Auto Forward: DISABLED\n🚫 Anti VV: ${s.antiViewOnce === true ? '✅' : '❌'}\n📂 Saved: *${fs.readdirSync(STATUS_FOLDER).length}* files\n\n💡 Use .vv for view-once\n💡 Use .save for media${footer()}`;
+                const sent = await sock.sendMessage(jid, { text: txt }); await sock.sendMessage(jid, { react: { text: '📱', key: sent.key } });
+                return;
+            }
+
+            // ============================================
+            // 💾 SAVE MEDIA
+            // ============================================
+            if (lower === '.save' || lower === `${prefix}save` || lower === '.ss') {
+                const ctx = msg.message?.extendedTextMessage?.contextInfo;
+                if (ctx?.quotedMessage) {
+                    const fm = { key: { remoteJid: jid, id: ctx.stanzaId }, message: ctx.quotedMessage };
+                    const sv = await saveMediaToFile(fm);
+                    if (sv) {
+                        if (sv.type === 'imageMessage') await sock.sendMessage(jid, { image: sv.buffer, caption: '💾 *Saved!*' + footer() });
+                        else if (sv.type === 'videoMessage') await sock.sendMessage(jid, { video: sv.buffer, caption: '💾 *Saved!*' + footer() });
+                        else if (sv.type === 'stickerMessage') await sock.sendMessage(jid, { sticker: sv.buffer });
+                        else await sock.sendMessage(jid, { document: sv.buffer, fileName: sv.filename, caption: '💾 *Saved!*' + footer() });
+                    } else await sock.sendMessage(jid, { text: '❌ *Failed!*' + footer() });
+                } else await sock.sendMessage(jid, { text: '💡 Reply to media with *.save*' + footer() });
+                return;
+            }
+
+            // Anti-link
+            if (group && await db.get('antiLinkEnabled', false) && /https?:\/\/(?:chat\.whatsapp\.com|t\.me|discord\.gg)/i.test(text) && !admin && !owner) {
+                try { await sock.sendMessage(jid, { delete: msg.key }); } catch {}
+                await sock.sendMessage(jid, { text: `🔗 *Link deleted!*`, mentions: [sender] });
+                return;
+            }
+
+            // AFK
+            if (msg.message?.extendedTextMessage?.contextInfo?.mentionedJid) {
+                for (const m of msg.message.extendedTextMessage.contextInfo.mentionedJid) {
+                    const afk = await db.afkGet(m);
+                    if (afk) { const mins = Math.floor((Date.now() - new Date(afk.afkAt).getTime()) / 60000); await sock.sendMessage(jid, { text: `💤 @${m.split('@')[0]} *AFK:* ${afk.reason} (${mins}m)`, mentions: [m] }); }
+                }
+            }
+            if (await db.afkGet(sender) && !lower.startsWith('.afk') && !lower.startsWith(`${prefix}afk`)) await db.afkRemove(sender);
+        }
+    });
+
+    // Group events
+    sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
+        if (action === 'add' && await db.get('welcomeEnabled', false)) { const wm = await db.get('welcomeMessage', '👋 Welcome @user! 🎉'); for (const p of participants) await sock.sendMessage(id, { text: `🎉 *Welcome!*\n\n${wm.replace('@user', `@${p.split('@')[0]}`)}${footer()}`, mentions: [p] }); }
+        if (action === 'remove' && await db.get('goodbyeEnabled', false)) { const gm = await db.get('goodbyeMessage', '👋 Goodbye @user! 😢'); for (const p of participants) await sock.sendMessage(id, { text: `👋 *Goodbye!*\n\n${gm.replace('@user', `@${p.split('@')[0]}`)}${footer()}`, mentions: [p] }); }
+    });
+
+    // Connection
+    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+        if (qr) { console.log('📱 QR:'); qrcode.generate(qr, { small: true }); }
+        if (connection === 'close') { isConnected = false; sock = null; const code = lastDisconnect?.error?.output?.statusCode; if (code !== DisconnectReason.loggedOut && !isShuttingDown) { reconnectAttempts++; reconnectTimer = setTimeout(async () => { reconnectTimer = null; await startBot(); }, Math.min(30000, 5000 * reconnectAttempts)); } }
+        else if (connection === 'open') { isConnected = true; reconnectAttempts = 0; if (sock.user) ownerJid = sock.user.id.replace(/:.*/, '') + '@s.whatsapp.net'; console.log(`\n✅ Connected!\n👑 ${ownerJid}\n🗄️ ${useJsonFallback ? 'JSON' : 'Mongoose'}\n`); if (ownerJid) { try { await sock.sendMessage(ownerJid, { image: { url: BOT_LOGO }, caption: `✅ *${config.botName} v${config.version}*\n\n🗄️ ${useJsonFallback ? 'JSON' : 'Mongoose'}\n👑 Owner Mode\n\n🖤 Auto View: ON\n💬 Auto React: ON\n📵 Auto Forward: OFF\n\n.settings - Settings\n.mode - Bot Mode\n.menu - Commands${footer()}`, mimetype: 'image/png' }); } catch {} } if (await db.get('autoNewsEnabled', true)) await checkAndShareAllNewNews(); }
+    });
+    sock.ev.on('creds.update', saveCreds);
+}
+
+// ============================================
+// NEWS FUNCTIONS
+// ============================================
+async function scrapeArticle(url) { try { const { data: html } = await axios.get(url, { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } }); if (!html) return { description: '', image: '' }; let img = ''; const og = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"[^>]*>/i); if (og?.[1]) img = og[1]; const ch = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<!--[\s\S]*?-->/g, ''); let d = ''; for (const rx of [/<div[^>]*class="[^"]*news-content[^"]*"[^>]*>([\s\S]*?)<\/div>/i, /<article[^>]*>([\s\S]*?)<\/article>/i]) { const m = ch.match(rx); if (m?.[1]) { const ps = m[1].match(/<p[^>]*>([\s\S]*?)<\/p>/gi); if (ps) { d = ps.map(p => p.replace(/<[^>]*>/g, '').trim()).filter(p => p.length > 30).join('\n\n'); if (d.length > 200) break; } } } if (!d) { const ps = ch.match(/<p[^>]*>([\s\S]*?)<\/p>/gi); if (ps) d = ps.map(p => p.replace(/<[^>]*>/g, '').trim()).filter(p => p.length > 30 && !p.includes('googletag') && !p.includes('window.') && !p.includes('function(')).join('\n\n'); } return { description: cleanText(d || ''), image: img }; } catch { return { description: '', image: '' }; } }
+async function fetchHiruNews() { const a = new Hiru(); const cats = ['BreakingNews','MainNews','TrendingNews']; const n = []; const s = new Set(); for (const c of cats) { if (typeof a[c] !== 'function') continue; try { const i = await a[c](); const u = i?.results?.newsURL, t = i?.results?.title; if (u && !s.has(u) && t) { s.add(u); n.push({ source:'🇱🇰 Hiru', category:c.replace('News',''), title:t, description:cleanText(i.results.news||''), url:u, image:i.results.thumb||'', date:i.results.date||'' }); } } catch {} } return n; }
+async function fetchDeranaNews() { const n = []; try { const r = await Derana.scrapeHotNews(); if (Array.isArray(r)) { for (const a of r.slice(0,3)) { const u = a.url||'', t = a.title||''; if (u&&t) { const { description, image } = await scrapeArticle(u); let d = description; if (!d||d.length<100) { d = a.content||a.description||t; d = String(d).replace(/<[^>]*>/g,'').replace(/\s+/g,' ').trim(); } n.push({ source:'🔴 Derana', category:'Hot', title:t, description:d, url:u, image:image||FALLBACK_IMAGE, date:a.time||'' }); await new Promise(r=>setTimeout(r,500)); } } } } catch {} return n; }
+async function fetchRSS(url, source, limit = 3) { const n = []; try { const { data } = await axios.get(url,{timeout:10000,headers:{'User-Agent':'Mozilla/5.0'}}); const items = data.match(/<item>([\s\S]*?)<\/item>/gi)||[]; for (const i of items.slice(0,limit)) { const t = (i.match(/<title>([^<]+)<\/title>/i)||[])[1]?.trim()||''; const u = (i.match(/<link>([^<]+)<\/link>/i)||[])[1]?.trim()||''; const img = (i.match(/<media:content[^>]*url="([^"]*)"/i)||[])[1]?.trim()||''; if (t&&u) { const { description } = await scrapeArticle(u); n.push({ source, category:'Latest', title:t, description:description||t, url:u, image:img||FALLBACK_IMAGE, date:'' }); await new Promise(r=>setTimeout(r,500)); } } } catch {} return n; }
+async function fetchAllLatestNews() { const src = [{ n:'Hiru', f:fetchHiruNews },{ n:'Derana', f:fetchDeranaNews },{ n:'AdaDerana', f:()=>fetchRSS('https://www.adaderana.lk/rss.php','📰 AdaDerana') },{ n:'Cricket', f:()=>fetchRSS('https://www.espncricinfo.com/rss/content/story/feeds/8.xml','🏏 ESPN',2) },{ n:'Ada.lk', f:async()=>{ try{ const r=await dynews.ada(); if(r?.status&&r.result?.url){ const d=cleanText(r.result.desc||''); if(d.length>50)return[{source:'📰 Ada.lk',category:'Latest',title:r.result.title,description:d,url:r.result.url,image:r.result.image||FALLBACK_IMAGE,date:`${r.result.date} ${r.result.time}`}]; } }catch{} return[]; } },{ n:'Newswire', f:async()=>{ try{ const r=await dynews.newswire(); if(r?.status&&r.result?.url){ const d=cleanText(r.result.desc||''); if(d.length>50)return[{source:'📰 Newswire',category:'Latest',title:r.result.title,description:d,url:r.result.url,image:r.result.image||FALLBACK_IMAGE,date:`${r.result.date} ${r.result.time}`}]; } }catch{} return[]; } },{ n:'Sirasa', f:async()=>{ try{ const r=await dynews.sirasa(); if(r?.status&&r.result?.url){ const d=cleanText(r.result.desc||''); if(d.length>50)return[{source:'📺 Sirasa',category:'Latest',title:r.result.title,description:d,url:r.result.url,image:r.result.image||FALLBACK_IMAGE,date:`${r.result.date} ${r.result.time}`}]; } }catch{} return[]; } }]; const res = await Promise.allSettled(src.map(s=>s.f())); const all = []; src.forEach((s,i)=>{ if(res[i].status==='fulfilled'&&Array.isArray(res[i].value)&&res[i].value.length){ all.push(...res[i].value); } }); const uniq = []; const seen = new Set(); for (const x of all) { if (x.url&&!seen.has(x.url)) { seen.add(x.url); uniq.push(x); } } return uniq; }
+async function sendNews(jid, n) { if (!sock?.user) return false; const d = truncate((n.description||n.title||'').trim(), 5000); const cap = `📰 *${n.source}* | ${n.category}\n\n📌 *${n.title}*\n\n${d}\n\n${n.date?`📅 ${n.date}\n`:''}🔗 ${n.url}${footer()}`; try { let s; if (n.image?.length>10) { try { s = await sock.sendMessage(jid,{image:{url:n.image},caption:cap,mimetype:'image/jpeg'}); } catch {} } if (!s) s = await sock.sendMessage(jid,{image:{url:BOT_LOGO},caption:cap,mimetype:'image/png'}); await sock.sendMessage(jid,{react:{text:randEmoji(),key:s.key}}); return true; } catch { return false; } }
+async function checkAndShareAllNewNews() { if (!sock?.user||await db.groupGet(NEWS_GROUP_JID,'isMuted',false)) return; try { const all = await fetchAllLatestNews(); if (!all.length) return; const urls = await db.urlsGet(); if (!urls.length) { for (const i of all) { if (i.url) await db.urlsAdd(i.url); } return; } let s=0; for (const i of all) { if (!i.url||urls.includes(i.url)) continue; if (await sendNews(NEWS_GROUP_JID,i)) { await db.urlsAdd(i.url); s++; } await new Promise(r=>setTimeout(r,3000)); } } catch {} }
+
+// ============================================
+// 🚀 START
+// ============================================
+(async () => {
+    console.log(`\n╔${'═'.repeat(40)}╗`);
+    console.log(`║      📰 ${config.botName} v${config.version} 📰          ║`);
+    console.log(`║   Auto View ✅ | Auto React ✅ | Forward ❌  ║`);
+    console.log(`╚${'═'.repeat(40)}╝`);
+    console.log(`👨‍💻 ${config.developer}`);
+    console.log(`👑 Owners: ${OWNER_NUMBERS.join(', ')}`);
+    console.log(`📡 News Group: ${NEWS_GROUP_JID}\n`);
+    await connectDatabase();
+    await startBot();
+    setInterval(async () => { if (await db.get('autoNewsEnabled', true)) await checkAndShareAllNewNews(); }, CHECK_INTERVAL_MS);
 })();
