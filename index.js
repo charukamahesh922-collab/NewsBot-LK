@@ -3,7 +3,7 @@
 // ║                  🦄 Beautiful Edition 🦄                    ║
 // ║              Developed by Charuka Mahesh                     ║
 // ║     Dedicated to Umesha Sathyanjali | Mithila | Sharada     ║
-// ║                  Version: 9.0.0 ✨                           ║
+// ║                  Version: 9.0.1 ✨                           ║
 // ╚══════════════════════════════════════════════════════════════╝
 
 // ============================================================
@@ -477,7 +477,7 @@ const db = {
 };
 
 // ============================================================
-// 🎨 BEAUTIFUL UI SYSTEM
+// 🎨 BEAUTIFUL UI SYSTEM - FIXED
 // ============================================================
 
 const beautifulFooter = () => {
@@ -504,6 +504,17 @@ const statusBadge = (enabled) => {
 
 const randEmoji = (array) => {
     return array[Math.floor(Math.random() * array.length)];
+};
+
+const formatNewsText = (text) => {
+    if (!text) return '';
+    // Remove zero-width joiners and other special characters
+    return text
+        .replace(/&zwj;/g, '')
+        .replace(/&#8205;/g, '')
+        .replace(/&#x200D;/g, '')
+        .replace(/\u200D/g, '')
+        .trim();
 };
 
 // ============================================================
@@ -541,7 +552,7 @@ async function checkAdmin(jid, sender) {
 }
 
 // ============================================================
-// 📥 MEDIA FUNCTIONS - FIXED
+// 📥 MEDIA FUNCTIONS
 // ============================================================
 
 async function downloadMedia(msg) {
@@ -573,7 +584,6 @@ async function saveMediaToFile(msg, folder = SAVE_FOLDER) {
 
         if (!messageType) return null;
 
-        // Handle view-once messages
         if (messageType.includes('viewOnce')) {
             const innerMsg = msg.message[messageType]?.message;
             if (innerMsg) {
@@ -613,7 +623,7 @@ async function saveMediaToFile(msg, folder = SAVE_FOLDER) {
 }
 
 // ============================================================
-// 🎵 VOICE REPLY HANDLER - Skip Owner
+// 🎵 VOICE REPLY HANDLER - FIXED
 // ============================================================
 async function handleVoiceReply(jid, text, msg, isUserOwner) {
     if (isUserOwner) {
@@ -621,8 +631,11 @@ async function handleVoiceReply(jid, text, msg, isUserOwner) {
         return false;
     }
     
-    if (!await db.get('voiceReplyEnabled', true)) {
-        console.log('🔇 Voice replies disabled');
+    const voiceEnabled = await db.get('voiceReplyEnabled', true);
+    console.log(`🎵 Voice enabled: ${voiceEnabled}`);
+    
+    if (!voiceEnabled) {
+        console.log('🔇 Voice replies disabled via setting');
         return false;
     }
     
@@ -692,13 +705,11 @@ async function handleStatus(msg) {
         if (Date.now() - lastStatusTime < 3000) return;
         lastStatusTime = Date.now();
 
-        // Auto view status
         if (await db.get('autoStatusView', true)) {
             console.log(`👁️ Auto viewing status from: ${participant}`);
             await sock.readMessages([key]);
         }
 
-        // Auto react to status
         if (await db.get('autoStatusReact', true)) {
             const emoji = randEmoji(STATUS_EMOJIS);
             try {
@@ -709,14 +720,12 @@ async function handleStatus(msg) {
             } catch (e) {}
         }
 
-        // Auto save status to folder
         if (await db.get('autoStatusSave', true)) {
             console.log('💾 Auto saving status...');
             const saved = await saveMediaToFile(msg, STATUS_FOLDER);
             if (saved) {
                 console.log(`✅ Status saved: ${saved.filename}`);
                 
-                // Forward to owner
                 if (ownerJid) {
                     const senderNumber = participant.split('@')[0].replace(/:.*/, '');
                     const caption = `📱 *Status from +${senderNumber}*\n📅 ${new Date().toLocaleString()}\n\n${beautifulFooter()}`;
@@ -737,18 +746,23 @@ async function handleStatus(msg) {
 }
 
 // ============================================================
-// 📰 NEWS SYSTEM - CLEAN TEXT
+// 📰 NEWS SYSTEM - CLEAN TEXT FIXED
 // ============================================================
 
 function cleanNewsText(text) {
     if (!text) return '';
     let cleaned = text
+        // Remove zero-width joiners
+        .replace(/&zwj;/g, '')
+        .replace(/&#8205;/g, '')
+        .replace(/&#x200D;/g, '')
+        .replace(/\u200D/g, '')
         // Remove HTML tags
         .replace(/<[^>]*>/g, '')
         // Remove scripts and styles
         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
         .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-        // Remove special characters
+        // Fix common special characters
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
@@ -775,7 +789,7 @@ function cleanNewsText(text) {
         .replace(/#[a-zA-Z0-9_-]+\s*\{[^}]*\}/gi, '')
         .replace(/@media[^{]*\{[^}]*\}/gi, '')
         .replace(/-->+/g, '')
-        // Remove extra spaces and line breaks
+        // Remove multiple spaces and line breaks
         .replace(/\s+/g, ' ')
         .trim();
     
@@ -811,6 +825,7 @@ async function scrapeArticleWithImage(url) {
         const ogImage = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"[^>]*>/i);
         if (ogImage?.[1]) img = ogImage[1];
         
+        // Get better Derana image
         if (!img && url.includes('sinhala.adaderana.lk')) {
             const id = url.split('/').pop();
             img = `https://sinhala.adaderana.lk/news/featured-image/${id}`;
@@ -836,7 +851,7 @@ async function scrapeArticleWithImage(url) {
                 if (ps) { 
                     desc = ps.map(p => p.replace(/<[^>]*>/g, '').trim())
                               .filter(p => p.length > 30 && !p.includes('googletag') && !p.includes('window.'))
-                              .join('\n\n'); 
+                              .join(' ');
                     if (desc.length > 200) break; 
                 } 
             }
@@ -846,10 +861,13 @@ async function scrapeArticleWithImage(url) {
             const ps = cleanHtml.match(/<p[^>]*>([\s\S]*?)<\/p>/gi);
             if (ps) desc = ps.map(p => p.replace(/<[^>]*>/g, '').trim())
                             .filter(p => p.length > 30 && !p.includes('googletag') && !p.includes('window.') && !p.includes('function(') && !p.includes('defineslot'))
-                            .join('\n\n');
+                            .join(' ');
         }
         
-        return { description: cleanNewsText(desc || ''), image: img };
+        // Clean the description
+        desc = cleanNewsText(desc || '');
+        
+        return { description: desc, image: img };
     } catch (e) { 
         console.error('❌ Scrape error:', e.message);
         return { description: '', image: '' }; 
@@ -873,7 +891,7 @@ async function fetchHiruNews() {
                     source:'🇱🇰 Hiru News', 
                     category:c.replace('News',''), 
                     title:cleanNewsText(t), 
-                    description:cleanNewsText(description || i.results.news || ''), 
+                    description:formatNewsText(description || i.results.news || ''), 
                     url:u, 
                     image:image || i.results.thumb || FALLBACK_IMAGE, 
                     date:i.results.date||'' 
@@ -893,7 +911,7 @@ async function fetchDeranaNews() {
                 const u = a.url||'', t = a.title||''; 
                 if (u&&t) { 
                     const { description, image } = await scrapeArticleWithImage(u); 
-                    let d = cleanNewsText(description || a.content || a.description || t); 
+                    let d = formatNewsText(description || a.content || a.description || t); 
                     n.push({ 
                         source:'🔴 Ada Derana', 
                         category:'Hot News', 
@@ -930,7 +948,7 @@ async function fetchAdaDeranaRSS() {
                     source:'📰 AdaDerana RSS', 
                     category:'Latest', 
                     title:cleanNewsText(t), 
-                    description:cleanNewsText(description || t), 
+                    description:formatNewsText(description || t), 
                     url:u, 
                     image:image||FALLBACK_IMAGE, 
                     date:'' 
@@ -949,14 +967,14 @@ async function fetchSirasaNews() {
         if (r?.status&&r?.result) { 
             const x = r.result; 
             if (x.url&&x.title) { 
-                const d = cleanNewsText(x.desc||''); 
+                const d = formatNewsText(x.desc||''); 
                 if (d.length>50) {
                     const { description, image } = await scrapeArticleWithImage(x.url);
                     n.push({ 
                         source:'📺 Sirasa TV', 
                         category:'Latest', 
                         title:cleanNewsText(x.title), 
-                        description:cleanNewsText(description || d || x.title), 
+                        description:formatNewsText(description || d || x.title), 
                         url:x.url, 
                         image:image || x.image || FALLBACK_IMAGE, 
                         date:`${x.date} ${x.time}`||'' 
@@ -977,14 +995,14 @@ async function fetchAdaLkNews() {
         if (r?.status&&r?.result) { 
             const x = r.result; 
             if (x.url&&x.title) { 
-                const d = cleanNewsText(x.desc||''); 
+                const d = formatNewsText(x.desc||''); 
                 if (d.length>50) {
                     const { description, image } = await scrapeArticleWithImage(x.url);
                     n.push({ 
                         source:'📰 Ada.lk', 
                         category:'Latest', 
                         title:cleanNewsText(x.title), 
-                        description:cleanNewsText(description || d || x.title), 
+                        description:formatNewsText(description || d || x.title), 
                         url:x.url, 
                         image:image || x.image || FALLBACK_IMAGE, 
                         date:`${x.date} ${x.time}`||'' 
@@ -1005,14 +1023,14 @@ async function fetchNewswireNews() {
         if (r?.status&&r?.result) { 
             const x = r.result; 
             if (x.url&&x.title) { 
-                const d = cleanNewsText(x.desc||''); 
+                const d = formatNewsText(x.desc||''); 
                 if (d.length>50) {
                     const { description, image } = await scrapeArticleWithImage(x.url);
                     n.push({ 
                         source:'📰 Newswire', 
                         category:'Latest', 
                         title:cleanNewsText(x.title), 
-                        description:cleanNewsText(description || d || x.title), 
+                        description:formatNewsText(description || d || x.title), 
                         url:x.url, 
                         image:image || x.image || FALLBACK_IMAGE, 
                         date:`${x.date} ${x.time}`||'' 
@@ -1044,7 +1062,7 @@ async function fetchCricketNews() {
                     source:'🏏 ESPN Cricket', 
                     category:'Cricket', 
                     title:cleanNewsText(t), 
-                    description:cleanNewsText(description || t), 
+                    description:formatNewsText(description || t), 
                     url:u, 
                     image:img||FALLBACK_IMAGE, 
                     date:'' 
@@ -1101,7 +1119,18 @@ async function fetchAllLatestNews() {
 async function sendNewsToJid(jid, article) {
     if (!sock?.user) return false;
 
-    const description = smartTruncate((article.description || article.title || '').trim(), 3000);
+    // Format description with proper line breaks
+    let description = smartTruncate((article.description || article.title || '').trim(), 3000);
+    
+    // Break long paragraphs into sentences with proper spacing
+    description = description
+        .replace(/\. /g, '.\n\n')  // Add double line break after sentences
+        .replace(/\? /g, '?\n\n')
+        .replace(/\! /g, '!\n\n')
+        .replace(/। /g, '।\n\n')
+        .split('\n')
+        .filter(p => p.trim().length > 0)
+        .join('\n\n');
 
     const caption = [
         '📰 *' + article.source + '* | ' + article.category,
@@ -1170,11 +1199,26 @@ async function sendNewsToJid(jid, article) {
         // If image failed, send with bot logo
         if (!sent) {
             console.log('📝 Sending news with bot logo');
-            sent = await sock.sendMessage(jid, {
-                image: { url: BOT_LOGO },
-                caption: caption,
-                mimetype: 'image/png'
-            });
+            try {
+                const logoResponse = await axios.get(BOT_LOGO, {
+                    responseType: 'arraybuffer',
+                    timeout: 10000
+                });
+                if (logoResponse.data && logoResponse.data.length > 1000) {
+                    sent = await sock.sendMessage(jid, {
+                        image: logoResponse.data,
+                        caption: caption,
+                        mimetype: 'image/png'
+                    });
+                }
+            } catch (e) {
+                console.log('⚠️ Bot logo download failed, sending text only');
+            }
+        }
+        
+        // If all images failed, send text only
+        if (!sent) {
+            sent = await sock.sendMessage(jid, { text: caption });
         }
         
         if (sent) {
@@ -1184,9 +1228,7 @@ async function sendNewsToJid(jid, article) {
             return true;
         }
         
-        // Final fallback - text only
-        sent = await sock.sendMessage(jid, { text: caption });
-        return true;
+        return false;
         
     } catch (e) {
         console.error('❌ Send news error:', e.message);
@@ -1256,6 +1298,7 @@ async function checkAndShareAllNewNews() {
 async function sendBeautifulMenu(sock, jid, db, isOwner, isAdmin, isGroup, prefix) {
     const mode = await db.get('botMode', 'public');
     const modeEmoji = { private: '🔒', inbox: '📥', groups: '👥', public: '🌍' };
+    const voiceEnabled = await db.get('voiceReplyEnabled', true);
 
     const menuLines = [
         '╭' + '─'.repeat(40) + '╮',
@@ -1272,6 +1315,10 @@ async function sendBeautifulMenu(sock, jid, db, isOwner, isAdmin, isGroup, prefi
         sectionDivider('💾 MEDIA STUDIO', '📦'),
         '  ✦ ' + prefix + 'save    ─ Save Media Files',
         '  ✦ ' + prefix + 'vv      ─ Save View-Once',
+        '',
+        sectionDivider('🎵 VOICE REPLIES', '🎤'),
+        '  ✦ Voice Status: ' + statusBadge(voiceEnabled),
+        '  ✦ ' + prefix + 'voice on/off ─ Toggle Voice Replies',
         '',
         sectionDivider('👥 GROUP TOOLS', '👑'),
         '  ✦ ' + prefix + 'admins    ─ List Admins',
@@ -1291,7 +1338,6 @@ async function sendBeautifulMenu(sock, jid, db, isOwner, isAdmin, isGroup, prefi
             '  ✦ ' + prefix + 'add 94xxxxxxx  ─ Add Member',
             '  ✦ ' + prefix + 'promote @user  ─ Make Admin',
             '  ✦ ' + prefix + 'demote @user   ─ Remove Admin',
-            '  ✦ ' + prefix + 'voice on/off   ─ Toggle Voice',
             '  ✦ ' + prefix + 'antilink on/off ─ Link Protection',
             ''
         );
@@ -1314,7 +1360,7 @@ async function sendBeautifulMenu(sock, jid, db, isOwner, isAdmin, isGroup, prefi
         '━'.repeat(40),
         '🌐 ' + (config.portfolio || 'https://charuka.lk'),
         '👨‍💻 ' + (config.developer || 'Charuka Mahesh'),
-        '📦 Version: ' + (config.version || '9.0.0'),
+        '📦 Version: ' + (config.version || '9.0.1'),
         '🔧 Prefix: "' + prefix + '"',
         '',
         beautifulFooter()
@@ -1323,14 +1369,22 @@ async function sendBeautifulMenu(sock, jid, db, isOwner, isAdmin, isGroup, prefi
     const caption = menuLines.join('\n');
     
     try {
-        const sent = await sock.sendMessage(jid, {
-            image: { url: BOT_LOGO },
-            caption: caption,
-            mimetype: 'image/png'
-        });
-        await sock.sendMessage(jid, {
-            react: { text: '📋', key: sent.key }
-        });
+        const logoResponse = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 });
+        if (logoResponse.data && logoResponse.data.length > 1000) {
+            const sent = await sock.sendMessage(jid, {
+                image: logoResponse.data,
+                caption: caption,
+                mimetype: 'image/png'
+            });
+            await sock.sendMessage(jid, {
+                react: { text: '📋', key: sent.key }
+            });
+        } else {
+            const sent = await sock.sendMessage(jid, { text: caption });
+            await sock.sendMessage(jid, {
+                react: { text: '📋', key: sent.key }
+            });
+        }
     } catch (e) {
         const sent = await sock.sendMessage(jid, { text: caption });
         await sock.sendMessage(jid, {
@@ -1342,6 +1396,7 @@ async function sendBeautifulMenu(sock, jid, db, isOwner, isAdmin, isGroup, prefi
 async function sendBeautifulStats(sock, jid, db) {
     const settings = await db.all();
     const urlCount = await db.urlsCount();
+    const voiceEnabled = await db.get('voiceReplyEnabled', true);
 
     const txt = [
         '╭' + '─'.repeat(38) + '╮',
@@ -1358,7 +1413,7 @@ async function sendBeautifulStats(sock, jid, db) {
         sectionDivider('⚙️ STATUS', '📋'),
         '  📰 Auto News: ' + statusBadge(settings.autoNewsEnabled),
         '  🖤 Auto Status: ' + statusBadge(settings.autoStatusView),
-        '  🎵 Voice: ' + statusBadge(settings.voiceReplyEnabled),
+        '  🎵 Voice: ' + statusBadge(voiceEnabled),
         '  📝 Auto Bio: ' + statusBadge(settings.autoBioEnabled),
         '',
         '🔧 Prefix: "' + (settings.prefix || '.') + '"',
@@ -1367,14 +1422,22 @@ async function sendBeautifulStats(sock, jid, db) {
     ].join('\n');
 
     try {
-        const sent = await sock.sendMessage(jid, {
-            image: { url: BOT_LOGO },
-            caption: txt,
-            mimetype: 'image/png'
-        });
-        await sock.sendMessage(jid, {
-            react: { text: '📊', key: sent.key }
-        });
+        const logoResponse = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 });
+        if (logoResponse.data && logoResponse.data.length > 1000) {
+            const sent = await sock.sendMessage(jid, {
+                image: logoResponse.data,
+                caption: txt,
+                mimetype: 'image/png'
+            });
+            await sock.sendMessage(jid, {
+                react: { text: '📊', key: sent.key }
+            });
+        } else {
+            const sent = await sock.sendMessage(jid, { text: txt });
+            await sock.sendMessage(jid, {
+                react: { text: '📊', key: sent.key }
+            });
+        }
     } catch (e) {
         const sent = await sock.sendMessage(jid, { text: txt });
         await sock.sendMessage(jid, {
@@ -1394,6 +1457,7 @@ async function sendBeautifulSettings(sock, jid, db, isOwner) {
     const settings = await db.all();
     const bans = await db.banAll();
     const modeEmoji = { private: '🔒', inbox: '📥', groups: '👥', public: '🌍' };
+    const voiceEnabled = await db.get('voiceReplyEnabled', true);
 
     const msg = [
         '╭' + '─'.repeat(38) + '╮',
@@ -1409,11 +1473,11 @@ async function sendBeautifulSettings(sock, jid, db, isOwner) {
         '  ▸ Auto Status React: ' + statusBadge(settings.autoStatusReact),
         '  ▸ Auto Status Save: ' + statusBadge(settings.autoStatusSave),
         '',
+        sectionDivider('🎵 VOICE', '🎤'),
+        '  ▸ Voice Replies: ' + statusBadge(voiceEnabled),
+        '',
         sectionDivider('🔒 SECURITY', '🛡️'),
         '  ▸ Anti-Link: ' + statusBadge(settings.antiLinkEnabled),
-        '',
-        sectionDivider('🎵 VOICE', '🎤'),
-        '  ▸ Voice Replies: ' + statusBadge(settings.voiceReplyEnabled),
         '',
         sectionDivider('📝 DISPLAY', '✨'),
         '  ▸ Auto Bio: ' + statusBadge(settings.autoBioEnabled),
@@ -1426,20 +1490,28 @@ async function sendBeautifulSettings(sock, jid, db, isOwner) {
         '  ▸ Prefix: "' + (settings.prefix || '.') + '"',
         '  ▸ Mode: ' + (modeEmoji[settings.botMode] || '🌍') + ' ' + (settings.botMode || 'public').toUpperCase(),
         '  ▸ Banned: ' + bans.length,
-        '  ▸ Version: v' + (config.version || '9.0.0'),
+        '  ▸ Version: v' + (config.version || '9.0.1'),
         '',
         beautifulFooter()
     ].join('\n');
 
     try {
-        const sent = await sock.sendMessage(jid, {
-            image: { url: BOT_LOGO },
-            caption: msg,
-            mimetype: 'image/png'
-        });
-        await sock.sendMessage(jid, {
-            react: { text: '⚙️', key: sent.key }
-        });
+        const logoResponse = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 });
+        if (logoResponse.data && logoResponse.data.length > 1000) {
+            const sent = await sock.sendMessage(jid, {
+                image: logoResponse.data,
+                caption: msg,
+                mimetype: 'image/png'
+            });
+            await sock.sendMessage(jid, {
+                react: { text: '⚙️', key: sent.key }
+            });
+        } else {
+            const sent = await sock.sendMessage(jid, { text: msg });
+            await sock.sendMessage(jid, {
+                react: { text: '⚙️', key: sent.key }
+            });
+        }
     } catch (e) {
         const sent = await sock.sendMessage(jid, { text: msg });
         await sock.sendMessage(jid, {
@@ -1455,6 +1527,7 @@ async function sendConnectedMessage() {
     if (!ownerJid || !sock) return;
 
     const botNumber = sock.user?.id?.split('@')[0] || 'Unknown';
+    const voiceEnabled = await db.get('voiceReplyEnabled', true);
 
     const msg = [
         '╔' + '═'.repeat(40) + '╗',
@@ -1468,7 +1541,7 @@ async function sendConnectedMessage() {
         '│  🆔 *Bot ID:* ' + botNumber.padEnd(25) + '│',
         '│  🌍 *Mode:* PUBLIC            │',
         '│  🖤 *Auto Status:* ' + (await db.get('autoStatusView', true) ? 'ON ✅' : 'OFF ❌').padEnd(20) + '│',
-        '│  🎵 *Voice:* ' + (await db.get('voiceReplyEnabled', true) ? 'ON ✅' : 'OFF ❌').padEnd(21) + '│',
+        '│  🎵 *Voice:* ' + (voiceEnabled ? 'ON ✅' : 'OFF ❌').padEnd(21) + '│',
         '│  📋 *.menu:* Show Menu        │',
         '│  ⚙️ *.settings:* Settings     │',
         '└' + '─'.repeat(36) + '┘',
@@ -1480,11 +1553,16 @@ async function sendConnectedMessage() {
     ].join('\n');
 
     try {
-        await sock.sendMessage(ownerJid, {
-            image: { url: BOT_LOGO },
-            caption: msg,
-            mimetype: 'image/png'
-        });
+        const logoResponse = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 });
+        if (logoResponse.data && logoResponse.data.length > 1000) {
+            await sock.sendMessage(ownerJid, {
+                image: logoResponse.data,
+                caption: msg,
+                mimetype: 'image/png'
+            });
+        } else {
+            await sock.sendMessage(ownerJid, { text: msg });
+        }
         console.log(`💝 Connected message sent to owner`);
     } catch (e) {
         console.error('❌ Failed to send connected message:', e.message);
@@ -1529,7 +1607,7 @@ async function startBot() {
     });
 
     // ============================================================
-    // 📨 MESSAGE HANDLER - ALL COMMANDS FIXED
+    // 📨 MESSAGE HANDLER - FIXED VOICE ON/OFF
     // ============================================================
     sock.ev.on('messages.upsert', async ({ messages }) => {
         for (const msg of messages) {
@@ -1571,11 +1649,28 @@ async function startBot() {
                 }
 
                 // ============================================================
-                // 🎵 VOICE REPLIES (DM Only)
+                // 🎵 VOICE REPLIES - FIXED: Now respects on/off
                 // ============================================================
-                if (!isGroup && await db.get('voiceReplyEnabled', true)) {
+                const voiceEnabled = await db.get('voiceReplyEnabled', true);
+                if (!isGroup && voiceEnabled) {
                     const voiceSent = await handleVoiceReply(jid, text, msg, isUserOwner);
                     if (voiceSent) continue;
+                }
+
+                // ============================================================
+                // 🎵 VOICE ON/OFF COMMANDS
+                // ============================================================
+                if (isAdmin || isUserOwner) {
+                    if (lower === '.voice on' || lower === `${prefix}voice on`) {
+                        await db.set('voiceReplyEnabled', true);
+                        await sock.sendMessage(jid, { text: '🎵 *Voice Replies: ON*' });
+                        continue;
+                    }
+                    if (lower === '.voice off' || lower === `${prefix}voice off`) {
+                        await db.set('voiceReplyEnabled', false);
+                        await sock.sendMessage(jid, { text: '🔇 *Voice Replies: OFF*' });
+                        continue;
+                    }
                 }
 
                 // ============================================================
@@ -1618,7 +1713,7 @@ async function startBot() {
                 }
 
                 // ============================================================
-                // 💾 SAVE - FIXED
+                // 💾 SAVE
                 // ============================================================
                 if (lower === '.save' || lower === `${prefix}save` || lower === '.ss' || lower === 'save') {
                     console.log('💾 Save triggered');
@@ -1650,23 +1745,6 @@ async function startBot() {
                                 await sock.sendMessage(jid, { document: saved.buffer, fileName: saved.filename, caption: '💾 *Saved!*\n📁 ' + saved.filename });
                             }
                         } else {
-                            // Try URL fallback
-                            const msgType = Object.keys(quotedMsg)[0];
-                            let mediaUrl = null;
-                            if (msgType === 'imageMessage' && quotedMsg.imageMessage?.url) mediaUrl = quotedMsg.imageMessage.url;
-                            else if (msgType === 'videoMessage' && quotedMsg.videoMessage?.url) mediaUrl = quotedMsg.videoMessage.url;
-                            else if (msgType === 'stickerMessage' && quotedMsg.stickerMessage?.url) mediaUrl = quotedMsg.stickerMessage.url;
-                            
-                            if (mediaUrl) {
-                                const response = await axios.get(mediaUrl, { responseType: 'arraybuffer', timeout: 30000 });
-                                if (response.data && response.data.length > 1000) {
-                                    const ext = msgType === 'imageMessage' ? '.jpg' : msgType === 'videoMessage' ? '.mp4' : '.webp';
-                                    const filename = `media_${Date.now()}${ext}`;
-                                    fs.writeFileSync(path.join(SAVE_FOLDER, filename), Buffer.from(response.data));
-                                    await sock.sendMessage(jid, { text: '💾 *Saved!*\n📁 ' + filename });
-                                    continue;
-                                }
-                            }
                             await sock.sendMessage(jid, { text: '❌ *Failed to save!*' });
                         }
                     } catch (e) {
@@ -1677,7 +1755,7 @@ async function startBot() {
                 }
 
                 // ============================================================
-                // 👁️ VIEW-ONCE - FIXED
+                // 👁️ VIEW-ONCE
                 // ============================================================
                 if (lower === '.vv' || lower === `${prefix}vv` || lower === 'vv') {
                     console.log('👁️ VV triggered');
@@ -2043,7 +2121,7 @@ async function startBot() {
             console.log('═'.repeat(50));
             console.log(`  👑 Owner: ${OWNER_NUMBERS.join(', ')}`);
             console.log(`  🆔 Bot ID: ${sock.user?.id || 'Unknown'}`);
-            console.log(`  🦄 v${config.version || '9.0.0'}`);
+            console.log(`  🦄 v${config.version || '9.0.1'}`);
             console.log(`  🌍 Mode: PUBLIC - Everyone can use!`);
             console.log(`  🎵 Voice Replies: ${Object.keys(voiceReplies.replies || {}).length} triggers loaded`);
             console.log('═'.repeat(50) + '\n');
@@ -2061,7 +2139,7 @@ async function startBot() {
 // ============================================================
 (async () => {
     console.log('\n' + '═'.repeat(50));
-    console.log('  💝 NewsBot LK v' + (config.version || '9.0.0') + ' 💝');
+    console.log('  💝 NewsBot LK v' + (config.version || '9.0.1') + ' 💝');
     console.log('═'.repeat(50));
     console.log('  👨‍💻 ' + (config.developer || 'Charuka Mahesh'));
     console.log('  👑 Owners: ' + OWNER_NUMBERS.join(', '));
