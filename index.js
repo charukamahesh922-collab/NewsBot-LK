@@ -477,7 +477,7 @@ const db = {
 };
 
 // ============================================================
-// 🎨 BEAUTIFUL UI SYSTEM - FIXED
+// 🎨 BEAUTIFUL UI SYSTEM
 // ============================================================
 
 const beautifulFooter = () => {
@@ -508,7 +508,6 @@ const randEmoji = (array) => {
 
 const formatNewsText = (text) => {
     if (!text) return '';
-    // Remove zero-width joiners and other special characters
     return text
         .replace(/&zwj;/g, '')
         .replace(/&#8205;/g, '')
@@ -623,7 +622,7 @@ async function saveMediaToFile(msg, folder = SAVE_FOLDER) {
 }
 
 // ============================================================
-// 🎵 VOICE REPLY HANDLER - FIXED
+// 🎵 VOICE REPLY HANDLER
 // ============================================================
 async function handleVoiceReply(jid, text, msg, isUserOwner) {
     if (isUserOwner) {
@@ -632,10 +631,8 @@ async function handleVoiceReply(jid, text, msg, isUserOwner) {
     }
     
     const voiceEnabled = await db.get('voiceReplyEnabled', true);
-    console.log(`🎵 Voice enabled: ${voiceEnabled}`);
-    
     if (!voiceEnabled) {
-        console.log('🔇 Voice replies disabled via setting');
+        console.log('🔇 Voice replies disabled');
         return false;
     }
     
@@ -746,23 +743,19 @@ async function handleStatus(msg) {
 }
 
 // ============================================================
-// 📰 NEWS SYSTEM - CLEAN TEXT FIXED
+// 📰 NEWS SYSTEM - CLEAN TEXT
 // ============================================================
 
 function cleanNewsText(text) {
     if (!text) return '';
     let cleaned = text
-        // Remove zero-width joiners
         .replace(/&zwj;/g, '')
         .replace(/&#8205;/g, '')
         .replace(/&#x200D;/g, '')
         .replace(/\u200D/g, '')
-        // Remove HTML tags
         .replace(/<[^>]*>/g, '')
-        // Remove scripts and styles
         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
         .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-        // Fix common special characters
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
@@ -777,7 +770,6 @@ function cleanNewsText(text) {
         .replace(/&#8217;/g, "'")
         .replace(/&#8220;/g, '"')
         .replace(/&#8221;/g, '"')
-        // Remove garbage text
         .replace(/ENGLISH.*?Home/gi, '')
         .replace(/Your browser does not support iframes.*$/gi, '')
         .replace(/Copyright.*$/gi, '')
@@ -789,7 +781,6 @@ function cleanNewsText(text) {
         .replace(/#[a-zA-Z0-9_-]+\s*\{[^}]*\}/gi, '')
         .replace(/@media[^{]*\{[^}]*\}/gi, '')
         .replace(/-->+/g, '')
-        // Remove multiple spaces and line breaks
         .replace(/\s+/g, ' ')
         .trim();
     
@@ -825,7 +816,6 @@ async function scrapeArticleWithImage(url) {
         const ogImage = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"[^>]*>/i);
         if (ogImage?.[1]) img = ogImage[1];
         
-        // Get better Derana image
         if (!img && url.includes('sinhala.adaderana.lk')) {
             const id = url.split('/').pop();
             img = `https://sinhala.adaderana.lk/news/featured-image/${id}`;
@@ -864,15 +854,16 @@ async function scrapeArticleWithImage(url) {
                             .join(' ');
         }
         
-        // Clean the description
-        desc = cleanNewsText(desc || '');
-        
-        return { description: desc, image: img };
+        return { description: cleanNewsText(desc || ''), image: img };
     } catch (e) { 
         console.error('❌ Scrape error:', e.message);
         return { description: '', image: '' }; 
     }
 }
+
+// ============================================================
+// 📰 NEWS SOURCE FUNCTIONS
+// ============================================================
 
 async function fetchHiruNews() { 
     const a = new Hiru(); 
@@ -934,23 +925,62 @@ async function fetchDeranaNews() {
 async function fetchAdaDeranaRSS() { 
     const n = []; 
     try { 
-        const r = await axios.get('https://www.adaderana.lk/rss.php',{
+        console.log('📰 Fetching AdaDerana RSS...');
+        const r = await axios.get('https://www.adaderana.lk/rss.php', {
             timeout:10000,
             headers:{'User-Agent':'Mozilla/5.0'}
         }); 
         const items = r.data.match(/<item>([\s\S]*?)<\/item>/gi)||[]; 
-        for (const i of items.slice(0,3)) { 
-            const t = (i.match(/<title>([^<]+)<\/title>/i)||[])[1]?.trim()||''; 
+        for (const i of items.slice(0,5)) { 
+            let t = (i.match(/<title>([^<]+)<\/title>/i)||[])[1]?.trim()||''; 
             const u = (i.match(/<link>([^<]+)<\/link>/i)||[])[1]?.trim()||''; 
-            if (t&&u) { 
-                const { description, image } = await scrapeArticleWithImage(u); 
+            let d = (i.match(/<description>([^<]+)<\/description>/i)||[])[1]?.trim()||''; 
+            
+            t = cleanNewsText(t);
+            d = cleanNewsText(d);
+            
+            // Remove garbage from description
+            d = d
+                .replace(/ENGLISH.*?Home/gi, '')
+                .replace(/LatestSportsBusinessScience.*?Top Picture/gi, '')
+                .replace(/About Us.*?Contact Us.*?Archive/gi, '')
+                .replace(/Tel\+94[0-9\s]+Mail[^\s]+@[^\s]+Address.*$/gi, '')
+                .replace(/Derana.*?MacroEntertainment.*?$/gi, '')
+                .replace(/Your browser does not support iframes/gi, '')
+                .replace(/X Youtube Rss Email Alerts/gi, '')
+                .replace(/HomeLatestSportsBusinessScience/gi, '')
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'")
+                .replace(/&nbsp;/g, ' ')
+                .replace(/&apos;/g, "'")
+                .trim();
+            
+            if (!d || d.length < 20 || d.includes('LatestSportsBusiness')) {
+                if (u) {
+                    try {
+                        const articleData = await scrapeArticleWithImage(u);
+                        if (articleData.description && articleData.description.length > 20) {
+                            d = articleData.description;
+                        }
+                    } catch (e) {}
+                }
+            }
+            
+            if (!d || d.length < 10 || d.includes('LatestSportsBusiness')) {
+                d = t;
+            }
+            
+            if (t&&u&&t.length>5&&!t.includes('Home')&&!t.includes('About Us')&&!t.includes('Contact Us')) {
                 n.push({ 
                     source:'📰 AdaDerana RSS', 
-                    category:'Latest', 
-                    title:cleanNewsText(t), 
-                    description:formatNewsText(description || t), 
+                    category:'Latest News', 
+                    title:t, 
+                    description:formatNewsText(d || t), 
                     url:u, 
-                    image:image||FALLBACK_IMAGE, 
+                    image:FALLBACK_IMAGE, 
                     date:'' 
                 }); 
                 await new Promise(r=>setTimeout(r,500)); 
@@ -1023,25 +1053,58 @@ async function fetchNewswireNews() {
         if (r?.status&&r?.result) { 
             const x = r.result; 
             if (x.url&&x.title) { 
-                const d = formatNewsText(x.desc||''); 
-                if (d.length>50) {
-                    const { description, image } = await scrapeArticleWithImage(x.url);
-                    n.push({ 
-                        source:'📰 Newswire', 
-                        category:'Latest', 
-                        title:cleanNewsText(x.title), 
-                        description:formatNewsText(description || d || x.title), 
-                        url:x.url, 
-                        image:image || x.image || FALLBACK_IMAGE, 
-                        date:`${x.date} ${x.time}`||'' 
-                    }); 
-                } 
+                let d = formatNewsText(x.desc||''); 
+                if (!d || d.length<30) {
+                    try {
+                        const articleData = await scrapeNewswireArticle(x.url);
+                        if (articleData.description && articleData.description.length > 30) {
+                            d = articleData.description;
+                        }
+                    } catch (e) {}
+                }
+                if (!d || d.length<10) d = cleanNewsText(x.title);
+                n.push({ 
+                    source:'📰 Newswire', 
+                    category:'Latest', 
+                    title:cleanNewsText(x.title), 
+                    description:d, 
+                    url:x.url, 
+                    image:x.image || FALLBACK_IMAGE, 
+                    date:`${x.date} ${x.time}`||'' 
+                }); 
             } 
         } 
     } catch(e) { 
         console.error('❌ Newswire fetch error:', e.message);
     } 
     return n; 
+}
+
+async function scrapeNewswireArticle(url) {
+    try {
+        const response = await axios.get(url, {
+            timeout: 15000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        });
+        const html = response.data;
+        if (!html) return { description: '' };
+        const contentMatch = html.match(/<div[^>]*class="[^"]*entry-content[^"]*"[^>]*>([\s\S]*?)<\/div>/i) ||
+                            html.match(/<div[^>]*class="[^"]*post-content[^"]*"[^>]*>([\s\S]*?)<\/div>/i) ||
+                            html.match(/<article[^>]*>([\s\S]*?)<\/article>/i);
+        if (contentMatch?.[1]) {
+            const paragraphs = contentMatch[1].match(/<p[^>]*>([\s\S]*?)<\/p>/gi) || [];
+            const text = paragraphs
+                .map(p => p.replace(/<[^>]*>/g, '').trim())
+                .filter(p => p.length > 30 && !p.includes('Advertisement') && !p.includes('Share this'))
+                .join(' ');
+            return { description: cleanNewsText(text) };
+        }
+        return { description: '' };
+    } catch (error) {
+        return { description: '' };
+    }
 }
 
 async function fetchCricketNews() { 
@@ -1076,6 +1139,171 @@ async function fetchCricketNews() {
     return n; 
 }
 
+async function fetchBBCSinhalaNews() {
+    const n = [];
+    try {
+        console.log('📰 Fetching BBC Sinhala news...');
+        const response = await axios.get('https://www.bbc.com/sinhala', {
+            timeout: 15000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            }
+        });
+
+        const html = response.data;
+        if (!html) return n;
+
+        const articles = [];
+        const mainPattern = /<h2[^>]*>\s*<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>\s*<\/h2>/gi;
+        const featurePattern = /<h3[^>]*>\s*<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>\s*<\/h3>/gi;
+
+        let match;
+        while ((match = mainPattern.exec(html)) !== null) {
+            const url = match[1].startsWith('http') ? match[1] : `https://www.bbc.com${match[1]}`;
+            let title = match[2].replace(/<[^>]*>/g, '').trim();
+            title = cleanNewsText(title);
+            if (url && title && title.length > 10 && !title.includes('Skip') && !title.includes('navigation')) {
+                articles.push({ url, title });
+            }
+        }
+
+        if (articles.length < 3) {
+            while ((match = featurePattern.exec(html)) !== null) {
+                const url = match[1].startsWith('http') ? match[1] : `https://www.bbc.com${match[1]}`;
+                let title = match[2].replace(/<[^>]*>/g, '').trim();
+                title = cleanNewsText(title);
+                if (url && title && title.length > 10 && !title.includes('Skip')) {
+                    articles.push({ url, title });
+                }
+            }
+        }
+
+        const uniqueArticles = [];
+        const seenUrls = new Set();
+        for (const article of articles) {
+            if (!seenUrls.has(article.url)) {
+                seenUrls.add(article.url);
+                uniqueArticles.push(article);
+            }
+        }
+
+        console.log(`📰 Found ${uniqueArticles.length} BBC Sinhala articles`);
+
+        for (const article of uniqueArticles.slice(0, 5)) {
+            try {
+                const articleData = await scrapeBBCSinhalaArticle(article.url);
+                let description = articleData.description || article.title;
+                description = cleanNewsText(description);
+                description = description
+                    .replace(/BBC News, සිංහල.*?ප්‍රධාන පුවත්/gi, '')
+                    .replace(/අන්තර්ගතයට පිවිසෙන්න.*?ප්‍රධාන පුවත්/gi, '')
+                    .replace(/නරඹන්න.*?අංශ/gi, '')
+                    .replace(/වැඩිපුරම කියැවූ.*?වීඩියෝ/gi, '')
+                    .replace(/ඡායාරූප මූලාශ්රය.*?Google/gi, '')
+                    .replace(/අපගේ BBC News සිංහල නිල WhatsApp Channel/gi, '')
+                    .replace(/සම්බන්ධ වීමට link එක click කරන්න/gi, '')
+                    .replace(/End of podcast promotion.*?$/gi, '')
+                    .replace(/Skip podcast promotion and continue reading/gi, '')
+                    .replace(/උණුසුම් පුවත්.*?විශේෂ විශේෂාංග/gi, '')
+                    .replace(/ඔබේ දුරකතනය වෙත ඍජුව ම ලබා ගන්න/gi, '')
+                    .trim();
+
+                if (!description || description.length < 20) {
+                    description = article.title;
+                }
+
+                const image = articleData.image || FALLBACK_IMAGE;
+                const date = articleData.date || '';
+
+                n.push({
+                    source: '🌍 BBC News Sinhala',
+                    category: 'International News',
+                    title: article.title,
+                    description: formatNewsText(description),
+                    url: article.url,
+                    image: image,
+                    date: date
+                });
+
+                console.log(`✅ BBC: ${article.title.substring(0, 50)}...`);
+                await new Promise(r => setTimeout(r, 1000));
+
+            } catch (e) {
+                console.error(`❌ Error processing BBC article: ${article.url}`, e.message);
+                n.push({
+                    source: '🌍 BBC News Sinhala',
+                    category: 'International News',
+                    title: article.title,
+                    description: formatNewsText(article.title),
+                    url: article.url,
+                    image: FALLBACK_IMAGE,
+                    date: ''
+                });
+            }
+        }
+
+        console.log(`🌍 BBC Sinhala: ${n.length} articles fetched`);
+        return n;
+
+    } catch (error) {
+        console.error('❌ BBC Sinhala fetch error:', error.message);
+        return n;
+    }
+}
+
+async function scrapeBBCSinhalaArticle(url) {
+    try {
+        const response = await axios.get(url, {
+            timeout: 15000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        });
+
+        const html = response.data;
+        if (!html) return { description: '', image: '', date: '' };
+
+        let description = '';
+        const contentPatterns = [
+            /<div[^>]*data-component="text-block"[^>]*>([\s\S]*?)<\/div>/gi,
+            /<div[^>]*class="[^"]*article__body[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+            /<div[^>]*class="[^"]*story-body[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+            /<article[^>]*>([\s\S]*?)<\/article>/i
+        ];
+
+        for (const pattern of contentPatterns) {
+            const match = html.match(pattern);
+            if (match?.[1]) {
+                const paragraphs = match[1].match(/<p[^>]*>([\s\S]*?)<\/p>/gi) || [];
+                const text = paragraphs
+                    .map(p => p.replace(/<[^>]*>/g, '').trim())
+                    .filter(p => p.length > 20 && !p.includes('Advertisement') && !p.includes('Share this'))
+                    .join(' ');
+                if (text.length > 100) {
+                    description = cleanNewsText(text);
+                    break;
+                }
+            }
+        }
+
+        let image = '';
+        const imageMatch = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"[^>]*>/i);
+        if (imageMatch?.[1]) image = imageMatch[1];
+
+        let date = '';
+        const dateMatch = html.match(/<time[^>]*datetime="([^"]*)"[^>]*>/i);
+        if (dateMatch?.[1]) date = cleanNewsText(dateMatch[1]);
+
+        return { description: description || '', image: image || '', date: date || '' };
+    } catch (error) {
+        return { description: '', image: '', date: '' };
+    }
+}
+
+// ============================================================
+// 📰 FETCH ALL NEWS
+// ============================================================
 async function fetchAllLatestNews() {
     console.log('\n📰 Fetching news from all sources...');
     
@@ -1086,7 +1314,8 @@ async function fetchAllLatestNews() {
         { name: 'Sirasa', fetch: fetchSirasaNews },
         { name: 'Ada.lk', fetch: fetchAdaLkNews },
         { name: 'Newswire', fetch: fetchNewswireNews },
-        { name: 'ESPN Cricket', fetch: fetchCricketNews }
+        { name: 'ESPN Cricket', fetch: fetchCricketNews },
+        { name: 'BBC Sinhala', fetch: fetchBBCSinhalaNews }
     ];
     
     const results = await Promise.allSettled(sources.map(s => s.fetch()));
@@ -1116,15 +1345,16 @@ async function fetchAllLatestNews() {
     return uniqueNews;
 }
 
+// ============================================================
+// 📰 SEND NEWS FUNCTION
+// ============================================================
 async function sendNewsToJid(jid, article) {
     if (!sock?.user) return false;
 
-    // Format description with proper line breaks
     let description = smartTruncate((article.description || article.title || '').trim(), 3000);
     
-    // Break long paragraphs into sentences with proper spacing
     description = description
-        .replace(/\. /g, '.\n\n')  // Add double line break after sentences
+        .replace(/\. /g, '.\n\n')
         .replace(/\? /g, '?\n\n')
         .replace(/\! /g, '!\n\n')
         .replace(/। /g, '।\n\n')
@@ -1149,7 +1379,6 @@ async function sendNewsToJid(jid, article) {
         let sent = null;
         let imageUrl = article.image || FALLBACK_IMAGE;
         
-        // Try multiple Derana image URLs
         if (article.url && article.url.includes('sinhala.adaderana.lk')) {
             const id = article.url.split('/').pop();
             const deranaUrls = [
@@ -1170,7 +1399,6 @@ async function sendNewsToJid(jid, article) {
             }
         }
         
-        // Try to send with image
         if (imageUrl && imageUrl.length > 10) {
             try {
                 const imgResponse = await axios.get(imageUrl, {
@@ -1196,7 +1424,6 @@ async function sendNewsToJid(jid, article) {
             }
         }
         
-        // If image failed, send with bot logo
         if (!sent) {
             console.log('📝 Sending news with bot logo');
             try {
@@ -1216,7 +1443,6 @@ async function sendNewsToJid(jid, article) {
             }
         }
         
-        // If all images failed, send text only
         if (!sent) {
             sent = await sock.sendMessage(jid, { text: caption });
         }
@@ -1607,7 +1833,7 @@ async function startBot() {
     });
 
     // ============================================================
-    // 📨 MESSAGE HANDLER - FIXED VOICE ON/OFF
+    // 📨 MESSAGE HANDLER
     // ============================================================
     sock.ev.on('messages.upsert', async ({ messages }) => {
         for (const msg of messages) {
@@ -1616,13 +1842,11 @@ async function startBot() {
 
                 const jid = msg.key.remoteJid;
 
-                // Status messages
                 if (jid === 'status@broadcast') {
                     await handleStatus(msg);
                     continue;
                 }
 
-                // Get text
                 let rawText = '';
                 if (msg.message.conversation) rawText = msg.message.conversation;
                 else if (msg.message.extendedTextMessage?.text) rawText = msg.message.extendedTextMessage.text;
@@ -1642,24 +1866,19 @@ async function startBot() {
 
                 console.log(`📩 [${senderNum}] "${lower}" | Owner: ${isUserOwner}`);
 
-                // Check ban
                 if (await db.banCheck(sender) && !isUserOwner) {
                     console.log(`🚫 Banned: ${senderNum}`);
                     continue;
                 }
 
-                // ============================================================
-                // 🎵 VOICE REPLIES - FIXED: Now respects on/off
-                // ============================================================
+                // Voice replies
                 const voiceEnabled = await db.get('voiceReplyEnabled', true);
                 if (!isGroup && voiceEnabled) {
                     const voiceSent = await handleVoiceReply(jid, text, msg, isUserOwner);
                     if (voiceSent) continue;
                 }
 
-                // ============================================================
-                // 🎵 VOICE ON/OFF COMMANDS
-                // ============================================================
+                // Voice on/off commands
                 if (isAdmin || isUserOwner) {
                     if (lower === '.voice on' || lower === `${prefix}voice on`) {
                         await db.set('voiceReplyEnabled', true);
@@ -1673,29 +1892,20 @@ async function startBot() {
                     }
                 }
 
-                // ============================================================
-                // 📋 MENU
-                // ============================================================
+                // Menu
                 if (lower === '.menu' || lower === `${prefix}menu` || lower === 'menu' || lower === 'help') {
-                    console.log('✅ MENU triggered');
                     await sendBeautifulMenu(sock, jid, db, isUserOwner, isAdmin, isGroup, prefix);
                     continue;
                 }
 
-                // ============================================================
-                // 📊 STATS
-                // ============================================================
+                // Stats
                 if (lower === '.stats' || lower === `${prefix}stats` || lower === 'stats') {
-                    console.log('✅ STATS triggered');
                     await sendBeautifulStats(sock, jid, db);
                     continue;
                 }
 
-                // ============================================================
-                // 📰 NEWS
-                // ============================================================
+                // News
                 if (lower === '.news' || lower === `${prefix}news` || lower === 'news') {
-                    console.log('✅ NEWS triggered');
                     await sock.sendMessage(jid, {
                         text: '📰 *Fetching latest news...*\n⏳ Please wait...'
                     });
@@ -1703,20 +1913,14 @@ async function startBot() {
                     continue;
                 }
 
-                // ============================================================
-                // ⚙️ SETTINGS (Owner Only)
-                // ============================================================
+                // Settings
                 if (lower === '.settings' || lower === `${prefix}settings` || lower === 'settings') {
-                    console.log('✅ SETTINGS triggered');
                     await sendBeautifulSettings(sock, jid, db, isUserOwner);
                     continue;
                 }
 
-                // ============================================================
-                // 💾 SAVE
-                // ============================================================
+                // Save
                 if (lower === '.save' || lower === `${prefix}save` || lower === '.ss' || lower === 'save') {
-                    console.log('💾 Save triggered');
                     const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
                     const quotedId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
                     
@@ -1754,11 +1958,8 @@ async function startBot() {
                     continue;
                 }
 
-                // ============================================================
-                // 👁️ VIEW-ONCE
-                // ============================================================
+                // View-Once
                 if (lower === '.vv' || lower === `${prefix}vv` || lower === 'vv') {
-                    console.log('👁️ VV triggered');
                     const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
                     if (!quotedMsg) {
                         await sock.sendMessage(jid, { text: '💡 Reply to a view-once message with *' + prefix + 'vv*' });
@@ -1798,9 +1999,7 @@ async function startBot() {
                     continue;
                 }
 
-                // ============================================================
-                // 👥 GROUP COMMANDS
-                // ============================================================
+                // Group commands
                 if (isGroup) {
                     if (lower === '.admins' || lower === `${prefix}admins`) {
                         try {
@@ -1858,9 +2057,7 @@ async function startBot() {
                         continue;
                     }
 
-                    // ============================================================
-                    // 🛡️ ADMIN COMMANDS
-                    // ============================================================
+                    // Admin commands
                     if (isAdmin || isUserOwner) {
                         if (lower === '.mute' || lower === `${prefix}mute`) {
                             await db.groupSet(jid, 'isMuted', true);
@@ -1939,9 +2136,7 @@ async function startBot() {
                     }
                 }
 
-                // ============================================================
-                // 👑 OWNER COMMANDS
-                // ============================================================
+                // Owner commands
                 if (isUserOwner) {
                     if (lower === '.mode' || lower.startsWith('.mode ') || lower === `${prefix}mode` || lower.startsWith(`${prefix}mode `)) {
                         const modeArg = text.replace('.mode', '').replace(`${prefix}mode`, '').trim().toLowerCase();
@@ -2029,9 +2224,7 @@ async function startBot() {
                     }
                 }
 
-                // ============================================================
-                // 🔗 ANTI-LINK
-                // ============================================================
+                // Anti-Link
                 if (isGroup && await db.get('antiLinkEnabled', false) && !isAdmin && !isUserOwner) {
                     const linkRegex = /https?:\/\/(?:chat\.whatsapp\.com|t\.me|discord\.gg|instagram\.com|facebook\.com)/i;
                     if (linkRegex.test(text)) {
@@ -2041,9 +2234,7 @@ async function startBot() {
                     }
                 }
 
-                // ============================================================
-                // 💤 AFK DETECTION
-                // ============================================================
+                // AFK Detection
                 if (msg.message?.extendedTextMessage?.contextInfo?.mentionedJid) {
                     for (const mentioned of msg.message.extendedTextMessage.contextInfo.mentionedJid) {
                         const afk = await db.afkGet(mentioned);
@@ -2064,9 +2255,7 @@ async function startBot() {
         }
     });
 
-    // ============================================================
-    // 👥 GROUP PARTICIPANT UPDATES
-    // ============================================================
+    // Group participant updates
     sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
         if (action === 'add' && await db.get('welcomeEnabled', false)) {
             for (const p of participants) {
@@ -2086,9 +2275,7 @@ async function startBot() {
         }
     });
 
-    // ============================================================
-    // 🔌 CONNECTION UPDATES
-    // ============================================================
+    // Connection updates
     sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
         if (qr) {
             console.log('\n📱 Scan QR Code:\n');
