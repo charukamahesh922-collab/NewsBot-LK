@@ -12,7 +12,8 @@ const fetchSportyNews = require('./sporty');
 const fetchBBCCricketNews = require('./bbccricket');
 const fetchBBCFootballNews = require('./bbcfootball');
 const fetchMawbimaNews = require('./mawbima');
-
+const fetchNewsLkNews = require('./newslk'},
+                                
 async function fetchAllLatestNews() {
     console.log('\n📰 Fetching news from all sources...');
     
@@ -31,6 +32,7 @@ async function fetchAllLatestNews() {
         { name: 'BBC Cricket', fetch: fetchBBCCricketNews },
         { name: 'BBC Football', fetch: fetchBBCFootballNews },
         { name: 'Mawbima', fetch: fetchMawbimaNews },
+        { name: 'News.Lk', fetch: fetchNewsLkNews }, 
     ];
     
     const results = await Promise.allSettled(sources.map(s => s.fetch()));
