@@ -120,11 +120,6 @@ module.exports = {
         '🔥',   // Fire
         '👍',   // Thumbs Up
         '💯',   // 100
-        '👏',   // Clap
-        '😍',   // Heart Eyes
-        '✨',   // Sparkles
-        '🌟',   // Glowing Star
-        '💫'    // Dizzy/Star
     ],
 
     // ═══════════════════════════════════════════════════════════
