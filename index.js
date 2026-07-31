@@ -111,6 +111,7 @@ const randEmoji = (a) => a[Math.floor(Math.random() * a.length)];
 // ============================================================
 let sock = null, reconnectTimer = null, reconnectAttempts = 0, isConnected = false, isShuttingDown = false;
 let lastStatusTime = 0, ownerJid = null, lastStatusMessages = [];
+let pairCodeRequested = false;
 
 function isOwner(senderNumber, senderJid) {
     const cleanNumber = senderNumber.replace(/[^0-9]/g, '');
@@ -127,9 +128,6 @@ async function checkAdmin(jid, sender) {
     try { const m = await sock.groupMetadata(jid); return m.participants.find(p => p.id === sender)?.admin != null; } catch { return false; }
 }
 
-// ============================================================
-// 📥 MEDIA
-// ============================================================
 async function downloadMedia(msg) {
     try { const baileys = await import('@whiskeysockets/baileys'); const buf = await baileys.downloadMediaMessage(msg, 'buffer', {}, { logger: { info: () => {}, error: () => {}, warn: () => {} } }); return (buf && buf.length > 100) ? buf : null; } catch (e) { return null; }
 }
@@ -147,9 +145,6 @@ async function saveMediaToFile(msg, folder = SAVE_FOLDER) {
     } catch (e) { return null; }
 }
 
-// ============================================================
-// 🎵 VOICE
-// ============================================================
 async function handleVoiceReply(jid, text, msg, isUserOwner) {
     if (isUserOwner) return false;
     if (!await db.get('voiceReplyEnabled', true)) return false;
@@ -170,9 +165,6 @@ async function handleVoiceReply(jid, text, msg, isUserOwner) {
     return false;
 }
 
-// ============================================================
-// 🖤 STATUS
-// ============================================================
 async function handleStatus(msg) {
     if (!sock) return;
     try {
@@ -181,10 +173,10 @@ async function handleStatus(msg) {
         if (Date.now() - lastStatusTime < 2000) return; lastStatusTime = Date.now();
         lastStatusMessages.push({ msg, timestamp: Date.now(), participant: p });
         if (lastStatusMessages.length > 50) lastStatusMessages = lastStatusMessages.slice(-50);
-        if (await db.get('autoStatusView', true)) { await sock.readMessages([key]); console.log('👁️ Status viewed'); }
+        if (await db.get('autoStatusView', true)) { await sock.readMessages([key]); }
         if (await db.get('autoStatusReact', true)) {
             const emoji = randEmoji(STATUS_EMOJIS);
-            try { await sock.sendMessage(p, { react: { text: emoji, key: key } }); console.log('❤️ Status reacted:', emoji); } catch (e) {
+            try { await sock.sendMessage(p, { react: { text: emoji, key: key } }); } catch (e) {
                 try { await sock.sendMessage('status@broadcast', { react: { text: emoji, key: key } }); } catch (e2) {}
             }
         }
@@ -201,7 +193,8 @@ async function sendNewsToJid(jid, article, sendReaction = true) {
     desc = fixLineBreaks(desc); desc = smartTruncate(desc, 2500);
     desc = desc.replace(/\. /g, '.\n\n').replace(/\? /g, '?\n\n').replace(/\! /g, '!\n\n').replace(/। /g, '।\n\n');
     desc = desc.split('\n').filter(p => p.trim().length > 0).join('\n\n');
-    const cap = ['╭' + '─'.repeat(40) + '╮', '┃  📰 *' + article.source + '*', '┃  📂 ' + article.category, '╰' + '─'.repeat(40) + '╯', '', '📌 *' + article.title + '*', '', '─'.repeat(40), '', desc, '', '─'.repeat(40), '', article.date ? '📅 ' + article.date : '', '🔗 ' + article.url, '', '💝 *NewsBot LK* | Charuka Mahesh'].filter(l => l !== '').join('\n');
+    const articleDate = article.date || new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const cap = ['╭' + '─'.repeat(40) + '╮', '┃  📰 *' + article.source + '*', '┃  📂 ' + article.category, '╰' + '─'.repeat(40) + '╯', '', '📌 *' + article.title + '*', '', '─'.repeat(40), '', desc, '', '─'.repeat(40), '', '📅 *' + articleDate + '*', '🔗 ' + article.url, '', '💝 *NewsBot LK* | Charuka Mahesh'].filter(l => l !== '').join('\n');
     try {
         let sent = null; let imgUrl = article.image || FALLBACK_IMAGE;
         if (imgUrl && imgUrl.length > 10 && !imgUrl.includes('undefined') && !imgUrl.includes('null')) {
@@ -216,262 +209,93 @@ async function sendNewsToJid(jid, article, sendReaction = true) {
 
 async function sendNewsCommand(jid, isGroup) {
     if (!sock?.user) return;
-    await sock.sendMessage(jid, { text: '📰 *Fetching news...* ⏳' });
+    await sock.sendMessage(jid, { text: '📰 *Fetching latest news...* ⏳' });
     try {
         const all = await fetchAllLatestNews();
-        if (!all.length) { await sock.sendMessage(jid, { text: '📭 *No news!*' }); return; }
-        let s = 0; const max = isGroup ? 5 : 8;
-        for (const a of all.slice(0, max)) { if (await sendNewsToJid(jid, a, true)) { s++; await new Promise(r => setTimeout(r, 2000)); } }
-        await sock.sendMessage(jid, { text: '✅ *' + s + ' news sent!* 📊 Total: ' + all.length });
-    } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error!*' }); }
+        if (!all.length) { await sock.sendMessage(jid, { text: '📭 *No news available!*' }); return; }
+        const urls = await db.urlsGet();
+        let sentCount = 0;
+        const max = isGroup ? 5 : 8;
+        const newArticles = all.filter(a => a.url && !urls.includes(a.url));
+        if (newArticles.length === 0) {
+            await sock.sendMessage(jid, { text: '📭 *No new news!*\n📊 Total tracked: ' + all.length + '\n💡 Auto updates every ' + (CHECK_INTERVAL_MS/1000) + 's' });
+            return;
+        }
+        for (const a of newArticles.slice(0, max)) { 
+            if (await sendNewsToJid(jid, a, true)) { await db.urlsAdd(a.url); sentCount++; } 
+            await new Promise(r => setTimeout(r, 2000)); 
+        }
+        await sock.sendMessage(jid, { text: '✅ *' + sentCount + ' new news sent!*\n📊 New available: ' + newArticles.length + '\n📰 Total tracked: ' + all.length });
+    } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error fetching news!*' }); }
 }
 
 async function checkAndShareAllNewNews() {
     if (!sock?.user) return;
     if (await db.groupGet(NEWS_GROUP_JID, 'isMuted', false)) return;
     try {
-        const all = await fetchAllLatestNews(); if (!all.length) return;
+        const all = await fetchAllLatestNews(); 
+        if (!all.length) return;
         const urls = await db.urlsGet();
-        if (!urls.length) { for (const i of all) { if (i.url) await db.urlsAdd(i.url); } return; }
+        if (!urls.length) { 
+            for (const i of all) { if (i.url) await db.urlsAdd(i.url); } 
+            console.log('🆕 First run: marked ' + all.length + ' articles as sent');
+            return;
+        }
         let s = 0;
-        for (const i of all) { if (!i.url || urls.includes(i.url)) continue; if (await sendNewsToJid(NEWS_GROUP_JID, i, true)) { await db.urlsAdd(i.url); s++; } await new Promise(r => setTimeout(r, 3000)); }
-        if (s > 0) console.log('✅ ' + s + ' news sent');
+        for (const i of all) { 
+            if (!i.url || urls.includes(i.url)) continue; 
+            if (await sendNewsToJid(NEWS_GROUP_JID, i, true)) { await db.urlsAdd(i.url); s++; } 
+            await new Promise(r => setTimeout(r, 3000)); 
+        }
+        if (s > 0) console.log('✅ ' + s + ' new news sent');
     } catch (e) {}
 }
 
 // ============================================================
-// 🎨 BEAUTIFUL MENUS
+// 🎨 MENUS
 // ============================================================
 async function sendMenu(jid, isOwner, isAdmin, isGroup, prefix) {
     const mode = await db.get('botMode', 'public');
     const me = { private: '🔒', inbox: '📥', groups: '👥', public: '🌍' };
     const ve = await db.get('voiceReplyEnabled', true);
-    
     const menu = [
-        '┏' + '━'.repeat(28) + '┓',
-        '┃     💝 *NEWS BOT LK* 💝     ┃',
-        '┃   🦄 *Sri Lanka #1* 🦄     ┃',
-        '┃    ' + me[mode] + ' Mode: *' + mode.toUpperCase() + '*      ┃',
-        '┗' + '━'.repeat(28) + '┛',
-        '',
-        '╔' + '═'.repeat(34) + '╗',
-        '║     📰 *NEWS COMMANDS* 📰       ║',
-        '╚' + '═'.repeat(34) + '╝',
-        '  ✦ ' + prefix + 'news    ─ 📰 Latest News',
-        '  ✦ ' + prefix + 'stats   ─ 📊 Statistics',
-        '',
-        '╔' + '═'.repeat(34) + '╗',
-        '║     💾 *MEDIA COMMANDS* 💾       ║',
-        '╚' + '═'.repeat(34) + '╝',
-        '  ✦ ' + prefix + 'save    ─ 💾 Save Content',
-        '  ✦ ' + prefix + 'statussave ─ 📱 Status (Owner)',
-        '  ✦ ' + prefix + 'vv      ─ 👁️ View-Once',
-        '',
-        '╔' + '═'.repeat(34) + '╗',
-        '║     🎵 *VOICE COMMANDS* 🎵       ║',
-        '╚' + '═'.repeat(34) + '╝',
-        '  ✦ Voice: ' + (ve ? '✅ *ON*' : '❌ *OFF*'),
-        '  ✦ ' + prefix + 'voice on/off ─ Toggle Voice',
-        '',
-        '╔' + '═'.repeat(34) + '╗',
-        '║     👥 *GROUP COMMANDS* 👥       ║',
-        '╚' + '═'.repeat(34) + '╝',
-        '  ✦ ' + prefix + 'admins    ─ 👑 List Admins',
-        '  ✦ ' + prefix + 'groupinfo ─ 📋 Group Info',
-        '  ✦ ' + prefix + 'tagall    ─ 📢 Tag All',
-        '  ✦ ' + prefix + 'poll      ─ 📊 Create Poll',
-        '  ✦ ' + prefix + 'afk       ─ 💤 AFK Mode',
+        '┏' + '━'.repeat(28) + '┓', '┃     💝 *NEWS BOT LK* 💝     ┃', '┃   🦄 *Sri Lanka #1* 🦄     ┃', '┃    ' + me[mode] + ' Mode: *' + mode.toUpperCase() + '*      ┃', '┗' + '━'.repeat(28) + '┛', '',
+        '╔' + '═'.repeat(34) + '╗', '║     📰 *NEWS COMMANDS* 📰       ║', '╚' + '═'.repeat(34) + '╝', '  ✦ ' + prefix + 'news    ─ 📰 Latest News', '  ✦ ' + prefix + 'stats   ─ 📊 Statistics', '',
+        '╔' + '═'.repeat(34) + '╗', '║     💾 *MEDIA COMMANDS* 💾       ║', '╚' + '═'.repeat(34) + '╝', '  ✦ ' + prefix + 'save    ─ 💾 Save Content', '  ✦ ' + prefix + 'statussave ─ 📱 Status (Owner)', '  ✦ ' + prefix + 'vv      ─ 👁️ View-Once', '',
+        '╔' + '═'.repeat(34) + '╗', '║     🎵 *VOICE COMMANDS* 🎵       ║', '╚' + '═'.repeat(34) + '╝', '  ✦ Voice: ' + (ve ? '✅ *ON*' : '❌ *OFF*'), '  ✦ ' + prefix + 'voice on/off ─ Toggle Voice', '',
+        '╔' + '═'.repeat(34) + '╗', '║     👥 *GROUP COMMANDS* 👥       ║', '╚' + '═'.repeat(34) + '╝', '  ✦ ' + prefix + 'admins    ─ 👑 List Admins', '  ✦ ' + prefix + 'groupinfo ─ 📋 Group Info', '  ✦ ' + prefix + 'jid       ─ 🔍 Get Group JID', '  ✦ ' + prefix + 'tagall    ─ 📢 Tag All', '  ✦ ' + prefix + 'poll      ─ 📊 Create Poll', '  ✦ ' + prefix + 'afk       ─ 💤 AFK Mode',
     ];
-    
-    if (isAdmin || isOwner) {
-        menu.push(
-            '',
-            '╔' + '═'.repeat(34) + '╗',
-            '║     🛡️ *ADMIN COMMANDS* 🛡️      ║',
-            '╚' + '═'.repeat(34) + '╝',
-            '  ✦ mute / unmute ─ 🔇 Toggle',
-            '  ✦ warn / kick   ─ ⚠️ Moderate',
-            '  ✦ antilink      ─ 🔗 Protection',
-            '  ✦ welcome       ─ 👋 Greetings',
-            '  ✦ goodbye       ─ 😢 Farewell'
-        );
-    }
-    
-    if (isOwner) {
-        menu.push(
-            '',
-            '╔' + '═'.repeat(34) + '╗',
-            '║     💎 *OWNER COMMANDS* 💎       ║',
-            '╚' + '═'.repeat(34) + '╝',
-            '  ✦ ' + prefix + 'settings    ─ ⚙️ Configure',
-            '  ✦ ' + prefix + 'mode        ─ 🌍 Bot Mode',
-            '  ✦ ' + prefix + 'autonews    ─ 📰 Auto News',
-            '  ✦ ' + prefix + 'autostatus  ─ 🖤 Auto Status',
-            '  ✦ ' + prefix + 'ban/unban   ─ 🚫 Manage Users',
-            '  ✦ ' + prefix + 'broadcast   ─ 📢 Mass Message'
-        );
-    }
-    
-    menu.push(
-        '',
-        '━'.repeat(38),
-        '👨‍💻 *Dev:* Charuka Mahesh | v' + (config.version || '9.0.1'),
-        '━'.repeat(38),
-        '',
-        '💝 *Umesha Sathyanjali*',
-        '💝 *Mithila & Sharada*'
-    );
-    
+    if (isAdmin || isOwner) { menu.push('', '╔' + '═'.repeat(34) + '╗', '║     🛡️ *ADMIN COMMANDS* 🛡️      ║', '╚' + '═'.repeat(34) + '╝', '  ✦ mute / unmute ─ 🔇 Toggle', '  ✦ warn / kick   ─ ⚠️ Moderate', '  ✦ antilink      ─ 🔗 Protection', '  ✦ welcome       ─ 👋 Greetings', '  ✦ goodbye       ─ 😢 Farewell'); }
+    if (isOwner) { menu.push('', '╔' + '═'.repeat(34) + '╗', '║     💎 *OWNER COMMANDS* 💎       ║', '╚' + '═'.repeat(34) + '╝', '  ✦ ' + prefix + 'settings    ─ ⚙️ Configure', '  ✦ ' + prefix + 'mode        ─ 🌍 Bot Mode', '  ✦ ' + prefix + 'autonews    ─ 📰 Auto News', '  ✦ ' + prefix + 'autostatus  ─ 🖤 Auto Status', '  ✦ ' + prefix + 'ban/unban   ─ 🚫 Manage Users', '  ✦ ' + prefix + 'broadcast   ─ 📢 Mass Message', '  ✦ ' + prefix + 'groups      ─ 📋 List Groups', '  ✦ ' + prefix + 'findgroup   ─ 🔍 Find Group'); }
+    menu.push('', '━'.repeat(38), '👨‍💻 *Dev:* Charuka Mahesh | v' + (config.version || '9.0.1'), '━'.repeat(38), '', '💝 *Umesha Sathyanjali*', '💝 *Mithila & Sharada*');
     const caption = menu.join('\n');
-    
     try {
         const lr = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 });
-        if (lr.data?.length > 1000) {
-            const s = await sock.sendMessage(jid, { image: lr.data, caption: caption, mimetype: 'image/png' });
-            await sock.sendMessage(jid, { react: { text: '📋', key: s.key } });
-        } else {
-            const s = await sock.sendMessage(jid, { text: caption });
-            await sock.sendMessage(jid, { react: { text: '📋', key: s.key } });
-        }
-    } catch (e) {
-        const s = await sock.sendMessage(jid, { text: caption });
-        await sock.sendMessage(jid, { react: { text: '📋', key: s.key } });
-    }
+        if (lr.data?.length > 1000) { const s = await sock.sendMessage(jid, { image: lr.data, caption: caption, mimetype: 'image/png' }); await sock.sendMessage(jid, { react: { text: '📋', key: s.key } }); }
+        else { const s = await sock.sendMessage(jid, { text: caption }); await sock.sendMessage(jid, { react: { text: '📋', key: s.key } }); }
+    } catch (e) { const s = await sock.sendMessage(jid, { text: caption }); await sock.sendMessage(jid, { react: { text: '📋', key: s.key } }); }
 }
 
 async function sendStats(jid) {
-    const s = await db.all();
-    const uc = await db.urlsCount();
-    const ve = await db.get('voiceReplyEnabled', true);
-    
-    const t = [
-        '┏' + '━'.repeat(28) + '┓',
-        '┃     📊 *STATISTICS* 📊      ┃',
-        '┃     💝 *NewsBot LK* 💝      ┃',
-        '┗' + '━'.repeat(28) + '┛',
-        '',
-        '╔' + '═'.repeat(30) + '╗',
-        '║       📈 *OVERVIEW*          ║',
-        '╚' + '═'.repeat(30) + '╝',
-        '  📰 News Shared: *' + uc + '*',
-        '  📱 Status Saved: *' + fs.readdirSync(STATUS_FOLDER).length + '*',
-        '  💾 Media Saved: *' + fs.readdirSync(SAVE_FOLDER).length + '*',
-        '  🔄 Interval: *' + (CHECK_INTERVAL_MS / 1000) + 's*',
-        '  📰 Sources: *13*',
-        '  📝 Articles/Fetch: *32*',
-        '',
-        '╔' + '═'.repeat(30) + '╗',
-        '║       ⚙️ *STATUS*            ║',
-        '╚' + '═'.repeat(30) + '╝',
-        '  📰 Auto News: ' + (s.autoNewsEnabled ? '✅ *ON*' : '❌ *OFF*'),
-        '  🖤 Auto Status: ' + (s.autoStatusView ? '✅ *ON*' : '❌ *OFF*'),
-        '  💾 Auto Save: ' + (s.autoStatusSave ? '✅ *ON*' : '❌ *OFF*'),
-        '  🎵 Voice: ' + (ve ? '✅ *ON*' : '❌ *OFF*'),
-        '  🔗 Anti-Link: ' + (s.antiLinkEnabled ? '✅ *ON*' : '❌ *OFF*'),
-        '',
-        '🔧 Prefix: *' + (s.prefix || '.') + '*',
-        '🗄️ DB: JSON',
-        '',
-        '━'.repeat(38),
-        '👨‍💻 Charuka Mahesh | v' + (config.version || '9.0.1'),
-    ].join('\n');
-    
-    try {
-        const lr = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 });
-        if (lr.data?.length > 1000) {
-            const se = await sock.sendMessage(jid, { image: lr.data, caption: t, mimetype: 'image/png' });
-            await sock.sendMessage(jid, { react: { text: '📊', key: se.key } });
-        } else {
-            const se = await sock.sendMessage(jid, { text: t });
-            await sock.sendMessage(jid, { react: { text: '📊', key: se.key } });
-        }
-    } catch (e) {
-        const se = await sock.sendMessage(jid, { text: t });
-        await sock.sendMessage(jid, { react: { text: '📊', key: se.key } });
-    }
+    const s = await db.all(); const uc = await db.urlsCount(); const ve = await db.get('voiceReplyEnabled', true);
+    const t = ['┏' + '━'.repeat(28) + '┓', '┃     📊 *STATISTICS* 📊      ┃', '┃     💝 *NewsBot LK* 💝      ┃', '┗' + '━'.repeat(28) + '┛', '', '╔' + '═'.repeat(30) + '╗', '║       📈 *OVERVIEW*          ║', '╚' + '═'.repeat(30) + '╝', '  📰 News Shared: *' + uc + '*', '  📱 Status Saved: *' + fs.readdirSync(STATUS_FOLDER).length + '*', '  💾 Media Saved: *' + fs.readdirSync(SAVE_FOLDER).length + '*', '  🔄 Interval: *' + (CHECK_INTERVAL_MS / 1000) + 's*', '  📰 Sources: *15*', '  📝 Articles/Fetch: *32*', '', '╔' + '═'.repeat(30) + '╗', '║       ⚙️ *STATUS*            ║', '╚' + '═'.repeat(30) + '╝', '  📰 Auto News: ' + (s.autoNewsEnabled ? '✅ *ON*' : '❌ *OFF*'), '  🖤 Auto Status: ' + (s.autoStatusView ? '✅ *ON*' : '❌ *OFF*'), '  💾 Auto Save: ' + (s.autoStatusSave ? '✅ *ON*' : '❌ *OFF*'), '  🎵 Voice: ' + (ve ? '✅ *ON*' : '❌ *OFF*'), '  🔗 Anti-Link: ' + (s.antiLinkEnabled ? '✅ *ON*' : '❌ *OFF*'), '', '🔧 Prefix: *' + (s.prefix || '.') + '*', '🗄️ DB: JSON', '', '━'.repeat(38), '👨‍💻 Charuka Mahesh | v' + (config.version || '9.0.1')].join('\n');
+    try { const lr = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 }); if (lr.data?.length > 1000) { const se = await sock.sendMessage(jid, { image: lr.data, caption: t, mimetype: 'image/png' }); await sock.sendMessage(jid, { react: { text: '📊', key: se.key } }); } else { const se = await sock.sendMessage(jid, { text: t }); await sock.sendMessage(jid, { react: { text: '📊', key: se.key } }); } } catch (e) { const se = await sock.sendMessage(jid, { text: t }); await sock.sendMessage(jid, { react: { text: '📊', key: se.key } }); }
 }
 
 async function sendSettings(jid, isOwner) {
-    if (!isOwner) {
-        await sock.sendMessage(jid, { text: '╔' + '═'.repeat(28) + '╗\n║    ❌ *Owner Only!*    ║\n╚' + '═'.repeat(28) + '╝' });
-        return;
-    }
-    
-    const s = await db.all();
-    const bans = await db.banAll();
-    const mode = s.botMode || 'public';
+    if (!isOwner) { await sock.sendMessage(jid, { text: '╔' + '═'.repeat(28) + '╗\n║    ❌ *Owner Only!*    ║\n╚' + '═'.repeat(28) + '╝' }); return; }
+    const s = await db.all(); const bans = await db.banAll(); const mode = s.botMode || 'public';
     const me = { private: '🔒', inbox: '📥', groups: '👥', public: '🌍' };
-    
-    const msg = [
-        '┏' + '━'.repeat(28) + '┓',
-        '┃     ⚙️ *SETTINGS* ⚙️      ┃',
-        '┃     💝 *NewsBot LK* 💝      ┃',
-        '┗' + '━'.repeat(28) + '┛',
-        '',
-        '╔' + '═'.repeat(30) + '╗',
-        '║       📰 *NEWS*             ║',
-        '╚' + '═'.repeat(30) + '╝',
-        '  Auto News: ' + (s.autoNewsEnabled ? '✅ ON' : '❌ OFF'),
-        '',
-        '╔' + '═'.repeat(30) + '╗',
-        '║       🖤 *STATUS*           ║',
-        '╚' + '═'.repeat(30) + '╝',
-        '  Auto View: ' + (s.autoStatusView ? '✅ ON' : '❌ OFF'),
-        '  Auto React: ' + (s.autoStatusReact ? '✅ ON' : '❌ OFF'),
-        '  Auto Save: ' + (s.autoStatusSave ? '✅ ON' : '❌ OFF'),
-        '',
-        '╔' + '═'.repeat(30) + '╗',
-        '║       🎵 *VOICE*            ║',
-        '╚' + '═'.repeat(30) + '╝',
-        '  Voice Replies: ' + (s.voiceReplyEnabled ? '✅ ON' : '❌ OFF'),
-        '',
-        '╔' + '═'.repeat(30) + '╗',
-        '║       🔒 *SECURITY*         ║',
-        '╚' + '═'.repeat(30) + '╝',
-        '  Anti-Link: ' + (s.antiLinkEnabled ? '✅ ON' : '❌ OFF'),
-        '',
-        '╔' + '═'.repeat(30) + '╗',
-        '║       👥 *GROUP*            ║',
-        '╚' + '═'.repeat(30) + '╝',
-        '  Welcome: ' + (s.welcomeEnabled ? '✅ ON' : '❌ OFF'),
-        '  Goodbye: ' + (s.goodbyeEnabled ? '✅ ON' : '❌ OFF'),
-        '',
-        '╔' + '═'.repeat(30) + '╗',
-        '║       🔧 *SYSTEM*           ║',
-        '╚' + '═'.repeat(30) + '╝',
-        '  Prefix: *' + (s.prefix || '.') + '*',
-        '  Mode: ' + (me[mode] || '🌍') + ' *' + mode.toUpperCase() + '*',
-        '  Banned: *' + (Array.isArray(bans) ? bans.length : 0) + '*',
-        '',
-        '💡 *Toggle Commands:*',
-        '  .autonews on/off',
-        '  .autostatus on/off',
-        '  .voice on/off',
-        '  .mode public/private',
-    ].join('\n');
-    
-    try {
-        const lr = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 });
-        if (lr.data?.length > 1000) {
-            const se = await sock.sendMessage(jid, { image: lr.data, caption: msg, mimetype: 'image/png' });
-            await sock.sendMessage(jid, { react: { text: '⚙️', key: se.key } });
-        } else {
-            const se = await sock.sendMessage(jid, { text: msg });
-            await sock.sendMessage(jid, { react: { text: '⚙️', key: se.key } });
-        }
-    } catch (e) {
-        const se = await sock.sendMessage(jid, { text: msg });
-        await sock.sendMessage(jid, { react: { text: '⚙️', key: se.key } });
-    }
+    const msg = ['┏' + '━'.repeat(28) + '┓', '┃     ⚙️ *SETTINGS* ⚙️      ┃', '┃     💝 *NewsBot LK* 💝      ┃', '┗' + '━'.repeat(28) + '┛', '', '╔' + '═'.repeat(30) + '╗', '║       📰 *NEWS*             ║', '╚' + '═'.repeat(30) + '╝', '  Auto News: ' + (s.autoNewsEnabled ? '✅ ON' : '❌ OFF'), '', '╔' + '═'.repeat(30) + '╗', '║       🖤 *STATUS*           ║', '╚' + '═'.repeat(30) + '╝', '  Auto View: ' + (s.autoStatusView ? '✅ ON' : '❌ OFF'), '  Auto React: ' + (s.autoStatusReact ? '✅ ON' : '❌ OFF'), '  Auto Save: ' + (s.autoStatusSave ? '✅ ON' : '❌ OFF'), '', '╔' + '═'.repeat(30) + '╗', '║       🎵 *VOICE*            ║', '╚' + '═'.repeat(30) + '╝', '  Voice Replies: ' + (s.voiceReplyEnabled ? '✅ ON' : '❌ OFF'), '', '╔' + '═'.repeat(30) + '╗', '║       🔒 *SECURITY*         ║', '╚' + '═'.repeat(30) + '╝', '  Anti-Link: ' + (s.antiLinkEnabled ? '✅ ON' : '❌ OFF'), '', '╔' + '═'.repeat(30) + '╗', '║       👥 *GROUP*            ║', '╚' + '═'.repeat(30) + '╝', '  Welcome: ' + (s.welcomeEnabled ? '✅ ON' : '❌ OFF'), '  Goodbye: ' + (s.goodbyeEnabled ? '✅ ON' : '❌ OFF'), '', '╔' + '═'.repeat(30) + '╗', '║       🔧 *SYSTEM*           ║', '╚' + '═'.repeat(30) + '╝', '  Prefix: *' + (s.prefix || '.') + '*', '  Mode: ' + (me[mode] || '🌍') + ' *' + mode.toUpperCase() + '*', '  Banned: *' + (Array.isArray(bans) ? bans.length : 0) + '*', '', '💡 *Toggle Commands:*', '  .autonews on/off', '  .autostatus on/off', '  .voice on/off', '  .mode public/private'].join('\n');
+    try { const lr = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 }); if (lr.data?.length > 1000) { const se = await sock.sendMessage(jid, { image: lr.data, caption: msg, mimetype: 'image/png' }); await sock.sendMessage(jid, { react: { text: '⚙️', key: se.key } }); } else { const se = await sock.sendMessage(jid, { text: msg }); await sock.sendMessage(jid, { react: { text: '⚙️', key: se.key } }); } } catch (e) { const se = await sock.sendMessage(jid, { text: msg }); await sock.sendMessage(jid, { react: { text: '⚙️', key: se.key } }); }
 }
 
 async function sendConnectedMessage() {
     if (!ownerJid || !sock) return;
     await new Promise(r => setTimeout(r, 3000));
     try {
-        const bn = sock.user?.id?.split('@')[0] || 'Unknown';
-        const ve = await db.get('voiceReplyEnabled', true);
-        const msg = ['╔' + '═'.repeat(36) + '╗', '║     💝 *NEWS BOT LK* 💝      ║', '║   🦄 *Connected!* 🦄        ║', '╚' + '═'.repeat(36) + '╝', '', '✅ *Online* | 🆔 ' + bn, '📰 *.news* | 📋 *.menu*', '🎵 Voice: ' + (ve ? 'ON' : 'OFF'), '📰 Sources: 13 | 📝 32 Articles', '', '💝 Umesha | Mithila | Sharada'].join('\n');
+        const bn = sock.user?.id?.split('@')[0] || 'Unknown'; const ve = await db.get('voiceReplyEnabled', true);
+        const msg = ['╔' + '═'.repeat(36) + '╗', '║     💝 *NEWS BOT LK* 💝      ║', '║   🦄 *Connected!* 🦄        ║', '╚' + '═'.repeat(36) + '╝', '', '✅ *Online* | 🆔 ' + bn, '📰 *.news* | 📋 *.menu*', '🎵 Voice: ' + (ve ? 'ON' : 'OFF'), '📰 Sources: 15 | 📝 32 Articles', '', '💝 Umesha | Mithila | Sharada'].join('\n');
         try { const lr = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 }); if (lr.data?.length > 1000) await sock.sendMessage(ownerJid, { image: lr.data, caption: msg, mimetype: 'image/png' }); else await sock.sendMessage(ownerJid, { text: msg }); } catch (e) { await sock.sendMessage(ownerJid, { text: msg }); }
     } catch (e) {}
 }
@@ -482,14 +306,16 @@ async function sendConnectedMessage() {
 async function startBot() {
     if (sock) { try { sock.end(); } catch {} sock = null; }
     const baileys = await import('@whiskeysockets/baileys');
-    const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = baileys;
+    const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } = baileys;
     const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'auth_info_baileys'));
+    const { version } = await fetchLatestBaileysVersion();
+    const loginMethod = config.loginMethod || 'qr';
     
     sock = makeWASocket({
         auth: state, browser: Browsers.macOS('Chrome'), markOnlineOnConnect: true,
         connectTimeoutMs: 30000, printQRInTerminal: false, syncFullHistory: false,
         retryRequestDelayMs: 5000, maxRetries: 5, defaultQueryTimeoutMs: 60000,
-        generateHighQualityLinkPreview: false,
+        generateHighQualityLinkPreview: false, version: version,
     });
 
     sock.ev.on('messages.upsert', async ({ messages }) => {
@@ -498,19 +324,16 @@ async function startBot() {
                 if (!msg.message) continue;
                 const jid = msg.key.remoteJid;
                 if (jid === 'status@broadcast') { await handleStatus(msg); continue; }
-
                 let rawText = '';
                 if (msg.message.conversation) rawText = msg.message.conversation;
                 else if (msg.message.extendedTextMessage?.text) rawText = msg.message.extendedTextMessage.text;
                 else if (msg.message.imageMessage?.caption) rawText = msg.message.imageMessage.caption;
                 else if (msg.message.videoMessage?.caption) rawText = msg.message.videoMessage.caption;
                 if (!rawText) continue;
-
                 const text = rawText.trim(), lower = text.toLowerCase();
                 const isGroup = jid.endsWith('@g.us');
                 const sender = msg.key.participant || jid;
                 let senderNum = sender.split('@')[0].replace(/[^0-9]/g, '');
-
                 if (isGroup) {
                     const idsToCheck = [msg.key.participant, msg.key.participantAlt, msg.key.remoteJid, msg.key.remoteJidAlt].filter(Boolean);
                     for (const id of idsToCheck) {
@@ -521,15 +344,13 @@ async function startBot() {
                         }
                     }
                 }
-
                 const isUserOwner = isOwner(senderNum, sender);
                 const isAdmin = isGroup ? await checkAdmin(jid, sender) : false;
                 const prefix = await db.get('prefix', '.');
-
                 if (await db.banCheck(sender) && !isUserOwner) continue;
                 if (!isGroup && await db.get('voiceReplyEnabled', true)) { if (await handleVoiceReply(jid, text, msg, isUserOwner)) continue; }
 
-                // === COMMANDS ===
+                // === BASIC COMMANDS ===
                 if (lower === 'voice on' || lower === '.voice on') { await db.set('voiceReplyEnabled', true); await sock.sendMessage(jid, { text: '🎵 *Voice: ON*' }); continue; }
                 if (lower === 'voice off' || lower === '.voice off') { await db.set('voiceReplyEnabled', false); await sock.sendMessage(jid, { text: '🔇 *Voice: OFF*' }); continue; }
                 if (lower === '.menu' || lower === 'menu' || lower === 'help') { await sendMenu(jid, isUserOwner, isAdmin, isGroup, prefix); continue; }
@@ -537,20 +358,19 @@ async function startBot() {
                 if (lower === '.settings' || lower === 'settings') { await sendSettings(jid, isUserOwner); continue; }
                 if (lower === '.news' || lower === 'news') { await sendNewsCommand(jid, isGroup); continue; }
 
+                // === MEDIA COMMANDS ===
                 if (lower === '.save' || lower === 'save' || lower === '.ss') {
                     const qm = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
                     if (!qm) { await sock.sendMessage(jid, { text: '💡 Reply to media with *save*' }); continue; }
                     try { const fm = { key: { remoteJid: jid, id: msg.message?.extendedTextMessage?.contextInfo?.stanzaId || 'f_' + Date.now() }, message: qm }; const sv = await saveMediaToFile(fm); await sock.sendMessage(jid, { text: sv ? '💾 *Saved!*' : '❌ *Failed!*' }); } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error!*' }); }
                     continue;
                 }
-
                 if (lower === '.statussave' || lower === 'statussave' || lower === '.ssave') {
                     if (!isUserOwner) { await sock.sendMessage(jid, { text: '❌ *Owner Only!*' }); continue; }
                     if (!lastStatusMessages.length) { await sock.sendMessage(jid, { text: '📭 *No statuses!*' }); continue; }
                     try { const sv = await saveMediaToFile(lastStatusMessages[lastStatusMessages.length - 1].msg, STATUS_FOLDER); await sock.sendMessage(jid, { text: sv ? '💾 *Saved!*' : '❌ *Failed!*' }); } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error!*' }); }
                     continue;
                 }
-
                 if (lower === '.vv' || lower === 'vv') {
                     const qm = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
                     if (!qm) { await sock.sendMessage(jid, { text: '💡 Reply to view-once with *vv*' }); continue; }
@@ -560,13 +380,30 @@ async function startBot() {
                     continue;
                 }
 
+                // === GROUP COMMANDS ===
                 if (isGroup) {
                     if (lower === '.admins' || lower === 'admins') { try { const m = await sock.groupMetadata(jid); const ad = m.participants.filter(p => p.admin); await sock.sendMessage(jid, { text: '👑 *Admins*\n\n' + ad.map(p => '@' + p.id.split('@')[0]).join('\n'), mentions: ad.map(p => p.id) }); } catch(e) {} continue; }
                     if (lower === '.groupinfo' || lower === 'groupinfo' || lower === '.gcinfo') { try { const m = await sock.groupMetadata(jid); await sock.sendMessage(jid, { text: '📋 *' + m.subject + '*\n👥 ' + m.participants.length + ' members' }); } catch(e) {} continue; }
+                    
+                    // ============================================================
+                    // 🔍 GROUP JID FINDER
+                    // ============================================================
+                    if (lower === '.jid' || lower === 'jid' || lower === '.groupjid' || lower === 'groupjid') {
+                        try {
+                            const metadata = await sock.groupMetadata(jid);
+                            await sock.sendMessage(jid, { 
+                                text: '╔' + '═'.repeat(36) + '╗\n║     🔍 *GROUP JID FINDER*      ║\n╚' + '═'.repeat(36) + '╝\n\n📛 *Name:* ' + metadata.subject + '\n🆔 *JID:* `' + jid + '`\n👥 *Members:* ' + metadata.participants.length 
+                            });
+                            await sock.sendMessage(jid, { text: '📋 *Copy this JID:*\n`' + jid + '`' });
+                        } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error!*' }); }
+                        continue;
+                    }
+                    
                     if (lower === '.tagall' || lower === 'tagall' || lower === '.everyone') { try { const m = await sock.groupMetadata(jid); await sock.sendMessage(jid, { text: '📢 *Everyone!*', mentions: m.participants.map(p => p.id) }); } catch(e) {} continue; }
                     if (lower.startsWith('.poll ') || lower.startsWith('poll ')) { const q = text.replace('.poll','').replace('poll','').trim(); await sock.sendMessage(jid, { poll: { name: '📊 ' + q, values: ['👍 Yes','👎 No','🤔 Maybe'], selectableCount: 1 } }); continue; }
                     if (lower.startsWith('.afk') || lower.startsWith('afk ')) { const r = text.replace('.afk','').replace('afk','').trim() || 'AFK'; await db.afkSet(sender, r); await sock.sendMessage(jid, { text: '💤 @' + sender.split('@')[0] + ' *AFK:* ' + r, mentions: [sender] }); continue; }
 
+                    // Admin commands
                     if (isAdmin || isUserOwner) {
                         if (lower === '.mute' || lower === 'mute') { await db.groupSet(jid, 'isMuted', true); await sock.sendMessage(jid, { text: '🔇 *Muted 30min*' }); setTimeout(async () => { await db.groupSet(jid, 'isMuted', false); }, 1800000); continue; }
                         if (lower === '.unmute' || lower === 'unmute') { await db.groupSet(jid, 'isMuted', false); await sock.sendMessage(jid, { text: '🔊 *Unmuted!*' }); continue; }
@@ -584,22 +421,51 @@ async function startBot() {
                     }
                 }
 
+                // === OWNER COMMANDS ===
                 if (isUserOwner) {
                     if (lower === '.mode' || lower.startsWith('.mode ') || lower === 'mode' || lower.startsWith('mode ')) { const ma = text.replace('.mode','').replace('mode','').trim().toLowerCase(); const vm = ['private','inbox','groups','public']; const me = { private:'🔒', inbox:'📥', groups:'👥', public:'🌍' }; if (vm.includes(ma)) { await db.set('botMode', ma); await sock.sendMessage(jid, { text: me[ma] + ' *Mode: ' + ma.toUpperCase() + '*' }); } else { const cm = await db.get('botMode','public'); await sock.sendMessage(jid, { text: me[cm] + ' *Current: ' + cm.toUpperCase() + '*\n💡 mode public' }); } continue; }
                     if (lower === '.autonews on') { await db.set('autoNewsEnabled', true); await sock.sendMessage(jid, { text: '📰 *Auto News: ON*' }); continue; }
                     if (lower === '.autonews off') { await db.set('autoNewsEnabled', false); await sock.sendMessage(jid, { text: '📰 *Auto News: OFF*' }); continue; }
                     if (lower === '.autostatus on') { await db.set('autoStatusView', true); await db.set('autoStatusReact', true); await sock.sendMessage(jid, { text: '🖤 *Auto Status: ON*' }); continue; }
                     if (lower === '.autostatus off') { await db.set('autoStatusView', false); await db.set('autoStatusReact', false); await db.set('autoStatusSave', false); await sock.sendMessage(jid, { text: '🖤 *Auto Status: OFF*' }); continue; }
+                    
+                    // ============================================================
+                    // 📋 LIST ALL GROUPS
+                    // ============================================================
+                    if (lower === '.groups' || lower === 'groups' || lower === '.listgroups') {
+                        try {
+                            const groups = await sock.groupFetchAllParticipating();
+                            const groupList = Object.entries(groups).map(([gid, data], i) => (i + 1) + '. *' + data.subject + '*\n   🆔 `' + gid + '`\n   👥 ' + data.participants.length + ' members');
+                            await sock.sendMessage(jid, { text: '╔' + '═'.repeat(36) + '╗\n║   📋 *YOUR GROUPS* (' + Object.keys(groups).length + ')  ║\n╚' + '═'.repeat(36) + '╝\n\n' + groupList.join('\n\n') + '\n\n💡 Use *.jid* in a group to get its JID' });
+                        } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error!*' }); }
+                        continue;
+                    }
+                    
+                    // ============================================================
+                    // 🔍 FIND GROUP BY NAME
+                    // ============================================================
+                    if (lower.startsWith('.findgroup ') || lower.startsWith('findgroup ')) {
+                        const searchName = text.replace('.findgroup', '').replace('findgroup', '').trim().toLowerCase();
+                        if (!searchName) { await sock.sendMessage(jid, { text: '💡 *Usage:* `.findgroup Name`' }); continue; }
+                        try {
+                            const groups = await sock.groupFetchAllParticipating();
+                            const found = Object.entries(groups).filter(([gid, data]) => data.subject.toLowerCase().includes(searchName));
+                            if (found.length === 0) { await sock.sendMessage(jid, { text: '❌ *No groups found!*' }); }
+                            else { const list = found.map(([gid, data], i) => (i + 1) + '. *' + data.subject + '*\n   `' + gid + '`'); await sock.sendMessage(jid, { text: '🔍 *Found ' + found.length + ':*\n\n' + list.join('\n\n') }); }
+                        } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error!*' }); }
+                        continue;
+                    }
+                    
                     if (lower.startsWith('.ban ') || lower.startsWith('ban ')) { const men = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (men?.length) { await db.banAdd(men[0]); await sock.sendMessage(jid, { text: '🚫 @' + men[0].split('@')[0] + ' *banned!*', mentions: [men[0]] }); } continue; }
                     if (lower.startsWith('.unban ') || lower.startsWith('unban ')) { const men = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (men?.length) { await db.banRemove(men[0]); await sock.sendMessage(jid, { text: '✅ @' + men[0].split('@')[0] + ' *unbanned!*', mentions: [men[0]] }); } continue; }
                     if (lower === '.banlist' || lower === 'banlist') { const bl = await db.banAll(); if (!bl.length) await sock.sendMessage(jid, { text: '✅ *No bans!*' }); else { const list = bl.map((b,i) => (i+1) + '. @' + b.userId.split('@')[0]).join('\n'); await sock.sendMessage(jid, { text: '🚫 *Banned (' + bl.length + ')*\n' + list, mentions: bl.map(b => b.userId) }); } continue; }
                     if (lower.startsWith('.broadcast ') || lower.startsWith('broadcast ')) { const bm = text.replace('.broadcast','').replace('broadcast','').trim(); try { const gs = await sock.groupFetchAllParticipating(); let c = 0; for (const gid of Object.keys(gs)) { try { await sock.sendMessage(gid, { text: '📢 *Broadcast*\n\n' + bm }); c++; await new Promise(r=>setTimeout(r,1000)); } catch(e) {} } await sock.sendMessage(jid, { text: '📢 *Sent to ' + c + ' groups!*' }); } catch(e) {} continue; }
                 }
 
+                // Anti-Link & AFK
                 if (isGroup && await db.get('antiLinkEnabled', false) && !isAdmin && !isUserOwner) { if (/https?:\/\/(?:chat\.whatsapp\.com|t\.me|discord\.gg)/i.test(text)) { try { await sock.sendMessage(jid, { delete: msg.key }); } catch(e) {} await sock.sendMessage(jid, { text: '🔗 *Link Deleted!*' }); continue; } }
                 if (msg.message?.extendedTextMessage?.contextInfo?.mentionedJid) { for (const m of msg.message.extendedTextMessage.contextInfo.mentionedJid) { const a = await db.afkGet(m); if (a) { const mins = Math.floor((Date.now() - new Date(a.afkAt).getTime()) / 60000); await sock.sendMessage(jid, { text: '💤 @' + m.split('@')[0] + ' *AFK:* ' + a.reason + ' (' + mins + 'm)', mentions: [m] }); } } }
                 if (await db.afkGet(sender) && !lower.startsWith('afk') && !lower.startsWith('.afk')) { await db.afkRemove(sender); }
-
             } catch (e) {}
         }
     });
@@ -609,10 +475,44 @@ async function startBot() {
         if (action === 'remove' && await db.get('goodbyeEnabled', false)) { for (const p of participants) await sock.sendMessage(id, { text: '😢 *Goodbye!*\n👋 @' + p.split('@')[0], mentions: [p] }); }
     });
 
-    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-        if (qr) { console.log('\n📱 Scan QR:\n'); qrcode.generate(qr, { small: true }); }
-        if (connection === 'close') { isConnected = false; sock = null; const sc = lastDisconnect?.error?.output?.statusCode; if (sc !== DisconnectReason.loggedOut && !isShuttingDown) { reconnectAttempts++; const d = Math.min(10000, 2000 * reconnectAttempts); reconnectTimer = setTimeout(async () => { reconnectTimer = null; if (!isShuttingDown) await startBot(); }, d); } }
-        else if (connection === 'open') { isConnected = true; reconnectAttempts = 0; if (sock.user) ownerJid = sock.user.id.replace(/:.*/, '') + '@s.whatsapp.net'; console.log('\n💝 Connected! 👑 Owners: ' + OWNER_NUMBERS.join(', ') + '\n'); if (ownerJid) await sendConnectedMessage(); if (await db.get('autoNewsEnabled', true)) await checkAndShareAllNewNews(); }
+    // CONNECTION UPDATE
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+        if (qr && loginMethod === 'qr') { console.log('\n📱 Scan QR Code:\n'); qrcode.generate(qr, { small: true }); }
+        if (loginMethod === 'pair' && !pairCodeRequested && (connection === 'connecting' || !!qr)) {
+            pairCodeRequested = true;
+            const phoneNumber = config.pairPhoneNumber || config.ownerNumber[0];
+            const cleanPhone = phoneNumber.replace(/[+\s-]/g, '');
+            try {
+                const code = await sock.requestPairingCode(cleanPhone);
+                console.log('\n╔' + '═'.repeat(40) + '╗\n║       📱 *PAIR CODE LOGIN*       ║\n║     Your Code: *' + code + '*              ║\n║  1. WhatsApp > Linked Devices    ║\n║  2. Tap "Link a Device"          ║\n║  3. Enter the code above         ║\n╚' + '═'.repeat(40) + '╝\n');
+            } catch (e) { console.log('⚠️ Pair code failed, use QR:', e.message); pairCodeRequested = false; }
+        }
+        if (connection === 'close') {
+            isConnected = false; sock = null;
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            if (statusCode === DisconnectReason.loggedOut) {
+                try { fs.rmSync(path.join(__dirname, 'auth_info_baileys'), { recursive: true, force: true }); } catch (e) {}
+                pairCodeRequested = false;
+                setTimeout(async () => { await startBot(); }, 3000);
+                return;
+            }
+            if (!isShuttingDown) { reconnectAttempts++; const d = Math.min(10000, 2000 * reconnectAttempts); reconnectTimer = setTimeout(async () => { reconnectTimer = null; pairCodeRequested = false; if (!isShuttingDown) await startBot(); }, d); }
+        }
+        if (connection === 'open') {
+            isConnected = true; reconnectAttempts = 0; pairCodeRequested = false;
+            if (sock.user) ownerJid = sock.user.id.replace(/:.*/, '') + '@s.whatsapp.net';
+            console.log('\n💝 Connected! 👑 Owners: ' + OWNER_NUMBERS.join(', ') + '\n');
+            if (ownerJid) await sendConnectedMessage();
+            if (await db.get('autoNewsEnabled', true)) {
+                const all = await fetchAllLatestNews();
+                if (all.length) {
+                    const urls = await db.urlsGet();
+                    if (!urls.length) { for (const article of all) { if (article.url) await db.urlsAdd(article.url); } console.log('📝 First run: Marked ' + all.length + ' articles as sent'); }
+                }
+                await checkAndShareAllNewNews();
+            }
+        }
     });
     sock.ev.on('creds.update', saveCreds);
 }
