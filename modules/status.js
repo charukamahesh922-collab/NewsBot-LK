@@ -1,216 +1,381 @@
 // ╔══════════════════════════════════════════════════════════════╗
 // ║                    💝 NEWS BOT LK 💝                        ║
-// ║                  📱 Status Handler 📱                       ║
-// ║         Auto View, React & View-Once Protection             ║
+// ║                  🔘 Toggle Commands 🔘                       ║
+// ║         Quick ON/OFF switches for bot features              ║
 // ╚══════════════════════════════════════════════════════════════╝
 
-// ============================================================
-// 📊 STATUS TRACKING
-// ============================================================
-
-/** Timestamp of last status processed (for rate limiting) */
-let lastStatusTime = 0;
-
-/** Total statuses viewed (session) */
-let totalStatusesViewed = 0;
-
-/** Total reactions sent (session) */
-let totalReactionsSent = 0;
-
-/** View-Once statuses skipped (session) */
-let viewOnceSkipped = 0;
+const { beautifulFooter, statusBadge } = require('./helpers');
 
 // ============================================================
-// 📱 STATUS HANDLER
+// 🎨 TOGGLE CONFIGURATIONS
 // ============================================================
 
 /**
- * 💝 Handle WhatsApp Status Updates
- * 
- * Features:
- * - Auto-view statuses from contacts
- * - Auto-react with random emoji
- * - Skip view-once statuses (privacy protection)
- * - Rate limiting (1 status per 3 seconds)
- * - Session statistics tracking
- * 
- * @param {Object} sock - WhatsApp socket connection
- * @param {Object} db - Database instance for settings
- * @param {Object} config - Bot configuration
- * @param {Object} msg - Status message object
+ * All available toggle commands
+ * Each toggle has:
+ * - key: Database setting key
+ * - val: Value to set (default: true)
+ * - emoji: Display emoji
+ * - name: Display name
+ * - onMessage: Custom ON message (optional)
+ * - offMessage: Custom OFF message (optional)
  */
-async function handleStatus(sock, db, config, msg) {
-    // Validate socket connection
-    if (!sock) {
-        console.log('⚠️ Status handler: No socket connection');
-        return;
+const TOGGLE_COMMANDS = [
+    // ═══════════════════════════════════════════════
+    // 🔗 ANTI-LINK PROTECTION
+    // ═══════════════════════════════════════════════
+    {
+        command: 'antilink on',
+        key: 'antiLinkEnabled',
+        value: true,
+        emoji: '🔗',
+        name: 'Anti-Link Protection',
+        description: 'Auto-deletes WhatsApp/Telegram/Discord links'
+    },
+    {
+        command: 'antilink off',
+        key: 'antiLinkEnabled',
+        value: false,
+        emoji: '🔗',
+        name: 'Anti-Link Protection'
+    },
+
+    // ═══════════════════════════════════════════════
+    // 🚫 ANTI VIEW-ONCE
+    // ═══════════════════════════════════════════════
+    {
+        command: 'antiview on',
+        key: 'antiViewOnce',
+        value: true,
+        emoji: '🚫',
+        name: 'Anti View-Once',
+        description: 'Skips view-once statuses for privacy'
+    },
+    {
+        command: 'antiview off',
+        key: 'antiViewOnce',
+        value: false,
+        emoji: '👁️',
+        name: 'Anti View-Once'
+    },
+
+    // ═══════════════════════════════════════════════
+    // 👋 WELCOME MESSAGES
+    // ═══════════════════════════════════════════════
+    {
+        command: 'welcome on',
+        key: 'welcomeEnabled',
+        value: true,
+        emoji: '👋',
+        name: 'Welcome Messages',
+        description: 'Greets new members when they join'
+    },
+    {
+        command: 'welcome off',
+        key: 'welcomeEnabled',
+        value: false,
+        emoji: '👋',
+        name: 'Welcome Messages'
+    },
+
+    // ═══════════════════════════════════════════════
+    // 👋 GOODBYE MESSAGES
+    // ═══════════════════════════════════════════════
+    {
+        command: 'goodbye on',
+        key: 'goodbyeEnabled',
+        value: true,
+        emoji: '😢',
+        name: 'Goodbye Messages',
+        description: 'Sends message when members leave'
+    },
+    {
+        command: 'goodbye off',
+        key: 'goodbyeEnabled',
+        value: false,
+        emoji: '😢',
+        name: 'Goodbye Messages'
+    },
+
+    // ═══════════════════════════════════════════════
+    // 📝 AUTO BIO
+    // ═══════════════════════════════════════════════
+    {
+        command: 'autobio on',
+        key: 'autoBioEnabled',
+        value: true,
+        emoji: '📝',
+        name: 'Auto Bio',
+        description: 'Updates WhatsApp bio every 30 minutes'
+    },
+    {
+        command: 'autobio off',
+        key: 'autoBioEnabled',
+        value: false,
+        emoji: '📝',
+        name: 'Auto Bio'
+    },
+
+    // ═══════════════════════════════════════════════
+    // 🔘 BUTTON MENU
+    // ═══════════════════════════════════════════════
+    {
+        command: 'buttons on',
+        key: 'buttonMenuEnabled',
+        value: true,
+        emoji: '🔘',
+        name: 'Button Menu',
+        description: 'Uses interactive WhatsApp buttons'
+    },
+    {
+        command: 'buttons off',
+        key: 'buttonMenuEnabled',
+        value: false,
+        emoji: '📋',
+        name: 'Text Menu',
+        description: 'Uses traditional text menu'
+    },
+
+    // ═══════════════════════════════════════════════
+    // 🎵 VOICE REPLIES
+    // ═══════════════════════════════════════════════
+    {
+        command: 'voice on',
+        key: 'voiceReplyEnabled',
+        value: true,
+        emoji: '🎵',
+        name: 'Voice Replies',
+        description: 'Sends voice clips for trigger words'
+    },
+    {
+        command: 'voice off',
+        key: 'voiceReplyEnabled',
+        value: false,
+        emoji: '🔇',
+        name: 'Voice Replies'
+    },
+
+    // ═══════════════════════════════════════════════
+    // 📰 AUTO NEWS
+    // ═══════════════════════════════════════════════
+    {
+        command: 'autonews on',
+        key: 'autoNewsEnabled',
+        value: true,
+        emoji: '📰',
+        name: 'Auto News',
+        description: 'Fetches news automatically',
+        ownerOnly: true
+    },
+    {
+        command: 'autonews off',
+        key: 'autoNewsEnabled',
+        value: false,
+        emoji: '📰',
+        name: 'Auto News',
+        ownerOnly: true
+    },
+
+    // ═══════════════════════════════════════════════
+    // 🖤 AUTO STATUS
+    // ═══════════════════════════════════════════════
+    {
+        command: 'autostatus on',
+        key: 'autoStatusView',
+        value: true,
+        emoji: '🖤',
+        name: 'Auto Status',
+        description: 'Auto views & reacts to statuses',
+        ownerOnly: true,
+        extraSet: { autoStatusReact: true }
+    },
+    {
+        command: 'autostatus off',
+        key: 'autoStatusView',
+        value: false,
+        emoji: '🖤',
+        name: 'Auto Status',
+        ownerOnly: true,
+        extraSet: { autoStatusReact: false }
     }
-
-    try {
-        const { key, message } = msg;
-
-        // ═══════════════════════════════════════════════
-        // 🔍 VALIDATION CHECKS
-        // ═══════════════════════════════════════════════
-
-        // Skip bot's own status
-        if (key.fromMe) return;
-
-        // Get status owner
-        const participant = key.participant || key.remoteJid;
-        
-        // Skip if no participant or it's the bot itself
-        if (!participant || participant === sock.user?.id) return;
-
-        // ═══════════════════════════════════════════════
-        // ⏱️ RATE LIMITING (1 status per 3 seconds)
-        // ═══════════════════════════════════════════════
-        const now = Date.now();
-        if (now - lastStatusTime < 3000) return;
-        lastStatusTime = now;
-
-        // ═══════════════════════════════════════════════
-        // 👤 EXTRACT SENDER INFO
-        // ═══════════════════════════════════════════════
-        const senderNumber = participant.split('@')[0].replace(/:.*/, '');
-        const senderName = senderNumber.replace(/[^0-9]/g, '');
-
-        // ═══════════════════════════════════════════════
-        // ⚙️ LOAD SETTINGS
-        // ═══════════════════════════════════════════════
-        const autoView = await db.get('autoStatusView', true);
-        const autoReact = await db.get('autoStatusReact', true);
-        const antiViewOnce = await db.get('antiViewOnce', false);
-
-        // ═══════════════════════════════════════════════
-        // 🚫 VIEW-ONCE PROTECTION
-        // ═══════════════════════════════════════════════
-        if (antiViewOnce) {
-            const isViewOnce = 
-                msg.message?.imageMessage?.viewOnce ||
-                msg.message?.videoMessage?.viewOnce;
-
-            if (isViewOnce) {
-                viewOnceSkipped++;
-                console.log(`🚫 View-Once Skipped: ${senderNumber} (Total: ${viewOnceSkipped})`);
-                return;
-            }
-        }
-
-        // ═══════════════════════════════════════════════
-        // 👁️ AUTO VIEW STATUS
-        // ═══════════════════════════════════════════════
-        if (!autoView) {
-            console.log(`⏭️ Auto-view disabled, skipping: ${senderNumber}`);
-            return;
-        }
-
-        // Mark status as viewed
-        await sock.readMessages([key]);
-        totalStatusesViewed++;
-        console.log(`👁️ Status Viewed: ${senderNumber} (Total: ${totalStatusesViewed})`);
-
-        // ═══════════════════════════════════════════════
-        // 💬 AUTO REACT TO STATUS
-        // ═══════════════════════════════════════════════
-        if (autoReact && config.statusEmojis?.length > 0) {
-            try {
-                // Pick random emoji from configured list
-                const emoji = config.statusEmojis[
-                    Math.floor(Math.random() * config.statusEmojis.length)
-                ];
-
-                // Send reaction
-                await sock.sendMessage('status@broadcast', {
-                    react: {
-                        text: emoji,
-                        key: key
-                    }
-                });
-
-                totalReactionsSent++;
-                console.log(`  💬 Reacted: ${emoji} (Total: ${totalReactionsSent})`);
-
-            } catch (reactError) {
-                // Silent fail for reactions (not critical)
-                console.log(`  ⚠️ Reaction failed: ${reactError.message}`);
-            }
-        }
-
-    } catch (error) {
-        console.error('❌ Status Handler Error:', error.message);
-    }
-}
-
-// ============================================================
-// 📊 STATUS STATISTICS
-// ============================================================
-
-/**
- * Get status handler statistics
- * @returns {Object} - Statistics object
- */
-function getStatusStats() {
-    return {
-        totalViewed: totalStatusesViewed,
-        totalReactions: totalReactionsSent,
-        viewOnceSkipped: viewOnceSkipped,
-        lastProcessed: lastStatusTime ? new Date(lastStatusTime).toISOString() : null,
-        rateLimitMs: 3000
-    };
-}
-
-/**
- * Reset status statistics
- */
-function resetStatusStats() {
-    totalStatusesViewed = 0;
-    totalReactionsSent = 0;
-    viewOnceSkipped = 0;
-    console.log('🔄 Status statistics reset');
-}
-
-// ============================================================
-// ⚙️ STATUS CONFIGURATION
-// ============================================================
-
-/**
- * Default status emojis (used if config doesn't specify)
- */
-const DEFAULT_STATUS_EMOJIS = [
-    '🖤',   // Black Heart
-    '❤️',   // Red Heart
-    '🔥',   // Fire
-    '👍',   // Thumbs Up
-    '💯',   // 100
-    '👏',   // Clap
-    '😍',   // Heart Eyes
-    '✨',   // Sparkles
-    '🌟',   // Glowing Star
-    '💫'    // Dizzy/Star
 ];
 
+// ============================================================
+// 🔘 TOGGLE HANDLER
+// ============================================================
+
 /**
- * Status handler configuration
+ * 💝 Handle Toggle Commands
+ * Processes ON/OFF commands for bot features
+ * 
+ * @param {Object} sock - WhatsApp socket
+ * @param {string} jid - Chat JID
+ * @param {Object} db - Database instance
+ * @param {string} lower - Lowercase message text
+ * @param {string} prefix - Command prefix
+ * @param {boolean} canToggle - Does user have permission?
+ * @param {boolean} isOwner - Is user the bot owner?
+ * @returns {boolean} - True if a toggle was processed
  */
-const STATUS_CONFIG = {
-    // Minimum interval between status processing (ms)
-    rateLimitMs: 3000,
-    
-    // Whether to log verbose output
-    verbose: true,
-    
-    // Default emojis for reactions
-    defaultEmojis: DEFAULT_STATUS_EMOJIS
-};
+async function handleToggles(sock, jid, db, lower, prefix, canToggle, isOwner = false) {
+    // Check permission
+    if (!canToggle) return false;
+
+    // Find matching toggle command
+    for (const toggle of TOGGLE_COMMANDS) {
+        const fullCommand = `.${toggle.command}`;
+        const prefixCommand = `${prefix}${toggle.command}`;
+
+        // Check if message matches this toggle
+        if (lower === fullCommand || lower === prefixCommand) {
+            
+            // Check owner-only restriction
+            if (toggle.ownerOnly && !isOwner) {
+                await sock.sendMessage(jid, {
+                    text: [
+                        '╭' + '─'.repeat(30) + '╮',
+                        '┃  👑 *Owner Only!*  ┃',
+                        '╰' + '─'.repeat(30) + '╯',
+                        '',
+                        `Only the bot owner can toggle *${toggle.name}*.`,
+                        '',
+                        beautifulFooter()
+                    ].join('\n')
+                });
+                return true;
+            }
+
+            // Set the main toggle value
+            await db.set(toggle.key, toggle.value);
+
+            // Set any extra keys (e.g., autostatus sets both view + react)
+            if (toggle.extraSet) {
+                for (const [extraKey, extraValue] of Object.entries(toggle.extraSet)) {
+                    await db.set(extraKey, extraValue);
+                }
+            }
+
+            // Build beautiful response
+            const isOn = toggle.value === true;
+            const responseLines = [
+                '╭' + '─'.repeat(36) + '╮',
+                '┃  ' + toggle.emoji + ' *' + toggle.name + '*  ' + 
+                    (isOn ? '✅ *ON*' : '❌ *OFF*').padEnd(12) + '┃',
+                '╰' + '─'.repeat(36) + '╯',
+                ''
+            ];
+
+            // Add description if available
+            if (toggle.description && isOn) {
+                responseLines.push('📝 ' + toggle.description);
+                responseLines.push('');
+            }
+
+            // Add toggle hint
+            const oppositeAction = toggle.command.includes(' on') ? 'off' : 'on';
+            responseLines.push('💡 Use *.' + toggle.command.replace(/on|off/, oppositeAction) + '* to toggle');
+            responseLines.push('');
+            responseLines.push(beautifulFooter());
+
+            await sock.sendMessage(jid, {
+                text: responseLines.join('\n')
+            });
+
+            console.log(`🔘 Toggle: ${toggle.name} → ${isOn ? 'ON' : 'OFF'}`);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// ============================================================
+// 📋 TOGGLE LIST
+// ============================================================
+
+/**
+ * 💝 Get All Available Toggles
+ * Returns formatted list of toggle commands
+ * 
+ * @param {string} prefix - Command prefix
+ * @param {boolean} isOwner - Is user owner?
+ * @returns {string} - Formatted toggle list
+ */
+function getToggleList(prefix, isOwner = false) {
+    const categories = {
+        '🔒 Security': ['antilink', 'antiview'],
+        '👥 Group': ['welcome', 'goodbye'],
+        '🎵 Media': ['voice'],
+        '📝 Display': ['autobio', 'buttons'],
+        '📰 News': ['autonews'],
+        '🖤 Status': ['autostatus']
+    };
+
+    const lines = [
+        '╭' + '─'.repeat(36) + '╮',
+        '┃     🔘 *Toggle Commands* 🔘     ┃',
+        '╰' + '─'.repeat(36) + '╯',
+        ''
+    ];
+
+    for (const [category, commands] of Object.entries(categories)) {
+        const categoryToggles = TOGGLE_COMMANDS.filter(t => 
+            commands.some(c => t.command.startsWith(c))
+        );
+
+        if (categoryToggles.length === 0) continue;
+
+        lines.push(`*${category}*`);
+        for (const toggle of categoryToggles) {
+            if (toggle.ownerOnly && !isOwner) continue;
+            const action = toggle.command.includes(' on') ? 'ON' : 'OFF';
+            lines.push(`  ${toggle.emoji} ${prefix}${toggle.command.padEnd(18)} ─ Turn ${action}`);
+        }
+        lines.push('');
+    }
+
+    lines.push(beautifulFooter());
+
+    return lines.join('\n');
+}
+
+// ============================================================
+// 🔧 TOGGLE UTILITIES
+// ============================================================
+
+/**
+ * Check if a message is a toggle command
+ * @param {string} text - Message text
+ * @param {string} prefix - Command prefix
+ * @returns {boolean} - True if it's a toggle command
+ */
+function isToggleCommand(text, prefix) {
+    const lower = text.toLowerCase().trim();
+    return TOGGLE_COMMANDS.some(toggle => {
+        return lower === `.${toggle.command}` || lower === `${prefix}${toggle.command}`;
+    });
+}
+
+/**
+ * Get toggle info by command
+ * @param {string} command - Toggle command
+ * @returns {Object|null} - Toggle configuration or null
+ */
+function getToggleInfo(command) {
+    return TOGGLE_COMMANDS.find(t => t.command === command) || null;
+}
 
 // ============================================================
 // 📤 EXPORTS
 // ============================================================
 module.exports = {
-    handleStatus,
-    getStatusStats,
-    resetStatusStats,
-    STATUS_CONFIG,
-    DEFAULT_STATUS_EMOJIS
+    handleToggles,
+    getToggleList,
+    isToggleCommand,
+    getToggleInfo,
+    TOGGLE_COMMANDS
 };
+
+
+//By Charuka Mahesh
+
