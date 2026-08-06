@@ -1,11 +1,45 @@
 // ╔══════════════════════════════════════════════════════════════╗
 // ║                    💝 NEWS BOT LK 💝                        ║
-// ║                  🦄 Beautiful Edition 🦄                    ║
+// ║                  🦄 QR Login Edition 🦄                    ║
 // ║              Developed by Charuka Mahesh                     ║
-// ║     Dedicated to Umesha Sathyanjali | Mithila | Sharada     ║
 // ║                  Version: 9.0.1 ✨                           ║
 // ╚══════════════════════════════════════════════════════════════╝
 
+// ============================================================
+// ERROR HANDLING
+// ============================================================
+const originalConsoleError = console.error;
+function isIgnoredBaileysError(message) {
+    if (!message) return false;
+    return message.includes('failed to decrypt message') ||
+        message.includes('No matching sessions') ||
+        message.includes('No session record') ||
+        message.includes('transaction failed, rolling back');
+}
+
+console.error = function(...args) {
+    const msg = args.map(String).join(' ');
+    if (isIgnoredBaileysError(msg)) {
+        originalConsoleError('[baileys][ignored]', msg);
+        return;
+    }
+    originalConsoleError.apply(console, args);
+};
+
+process.on('uncaughtException', (err) => {
+    if (isIgnoredBaileysError(err?.message)) return;
+    console.error('Uncaught:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+    const message = reason?.message || String(reason);
+    if (isIgnoredBaileysError(message)) return;
+    console.error('UnhandledRejection:', reason);
+});
+
+// ============================================================
+// IMPORTS
+// ============================================================
 const fs = require('fs');
 const path = require('path');
 const qrcode = require('qrcode-terminal');
@@ -14,9 +48,10 @@ const mongoose = require('mongoose');
 const config = require('./config');
 const fetchAllLatestNews = require('./news/fetchAll');
 const { cleanNewsText, isGarbageDescription, fixLineBreaks, formatNewsText, smartTruncate } = require('./news/utils');
+const { handleButtonMenu, handleButtonResponse, sendMainMenu, sendSettingsMenu } = require('./modules/menus');
 
 // ============================================================
-// 🎵 VOICE REPLIES
+// VOICE REPLIES
 // ============================================================
 let voiceReplies = { replies: {} };
 try {
@@ -28,9 +63,14 @@ try {
 } catch (e) { console.log('⚠️ voiceReplies.json:', e.message); }
 
 // ============================================================
-// ⚙️ CONFIGURATION
+// CONFIGURATION
 // ============================================================
-const OWNER_NUMBERS = Array.isArray(config.ownerNumber) ? config.ownerNumber : [config.ownerNumber];
+const OWNER_NUMBERS = Array.isArray(config.ownerNumber)
+    ? config.ownerNumber.map(n => String(n || '').trim()).filter(Boolean)
+    : [String(config.ownerNumber || '')].map(n => n.trim()).filter(Boolean);
+
+const OWNER_CLEAN_NUMBERS = OWNER_NUMBERS.map(n => n.replace(/[^0-9]/g, '')).filter(n => n.length >= 9);
+
 const NEWS_GROUP_JID = config.newsGroupJid;
 const CHECK_INTERVAL_MS = config.checkIntervalMs || 120000;
 const BOT_LOGO = config.botLogo;
@@ -44,20 +84,60 @@ const VV_FOLDER = path.join(__dirname, 'view_once_saved');
 [SAVE_FOLDER, STATUS_FOLDER, VV_FOLDER].forEach(f => { if (!fs.existsSync(f)) fs.mkdirSync(f, { recursive: true }); });
 
 // ============================================================
-// 🗄️ JSON DATABASE
+// OWNER IDENTIFICATION
+// ============================================================
+function extractPhoneFromJid(jid) {
+    if (!jid) return '';
+    jid = String(jid);
+    if (jid === 'status@broadcast') return '';
+    const id = jid.split('@')[0].replace(/[^0-9]/g, '');
+    if (id.length >= 9) {
+        if (id.startsWith('94') && id.length >= 11) return id;
+        if (id.length > 12) {
+            const phoneMatch = id.match(/94\d{9,10}/);
+            if (phoneMatch) return phoneMatch[0];
+        }
+    }
+    return id;
+}
+
+function isOwner(senderNumber, senderJid) {
+    if (!senderNumber && !senderJid) return false;
+    let cleanNumber = String(senderNumber || '').replace(/[^0-9]/g, '');
+    if (!cleanNumber && senderJid) {
+        cleanNumber = extractPhoneFromJid(senderJid);
+    }
+    for (const ownerNum of OWNER_CLEAN_NUMBERS) {
+        if (cleanNumber === ownerNum) return true;
+        if (cleanNumber.length >= 9 && ownerNum.length >= 9 && cleanNumber.slice(-9) === ownerNum.slice(-9)) return true;
+        if (cleanNumber.length >= 10 && ownerNum.length >= 10 && cleanNumber.slice(-10) === ownerNum.slice(-10)) return true;
+    }
+    return false;
+}
+
+// ============================================================
+// JSON DATABASE
 // ============================================================
 const JSON_DB_FILE = path.join(__dirname, 'database.json');
 let useMongo = false;
-let jsonDb = { settings: { botMode: 'public', prefix: '.', autoNewsEnabled: true, autoStatusView: true, autoStatusReact: true, autoStatusSave: false, voiceReplyEnabled: true, autoBioEnabled: true, antiLinkEnabled: false, welcomeEnabled: false, goodbyeEnabled: false }, warnings: {}, bans: [], afk: {}, groupSettings: {}, sentUrls: [] };
+let jsonDb = { 
+    settings: { botMode: 'public', prefix: '.', autoNewsEnabled: true, autoStatusView: true, autoStatusReact: true, autoStatusSave: false, voiceReplyEnabled: true, autoBioEnabled: true, antiLinkEnabled: false, welcomeEnabled: false, goodbyeEnabled: false }, 
+    warnings: {}, bans: [], afk: {}, groupSettings: {}, sentUrls: [] 
+};
 
 function loadJsonDb() {
-    try { if (fs.existsSync(JSON_DB_FILE)) { const d = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8')); jsonDb = { settings: { ...jsonDb.settings, ...(d.settings || {}) }, warnings: d.warnings || {}, bans: d.bans || [], afk: d.afk || {}, groupSettings: d.groupSettings || {}, sentUrls: d.sentUrls || [] }; } else saveJsonDb(); } catch (e) { saveJsonDb(); }
+    try { 
+        if (fs.existsSync(JSON_DB_FILE)) { 
+            const d = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8')); 
+            jsonDb = { settings: { ...jsonDb.settings, ...(d.settings || {}) }, warnings: d.warnings || {}, bans: d.bans || [], afk: d.afk || {}, groupSettings: d.groupSettings || {}, sentUrls: d.sentUrls || [] }; 
+        } else saveJsonDb(); 
+    } catch (e) { saveJsonDb(); }
 }
 function saveJsonDb() { try { fs.writeFileSync(JSON_DB_FILE, JSON.stringify(jsonDb, null, 2)); } catch (e) {} }
 loadJsonDb();
 
 // ============================================================
-// 🍃 MONGODB
+// MONGODB (OPTIONAL)
 // ============================================================
 const settingSchema = new mongoose.Schema({ key: String, value: mongoose.Schema.Types.Mixed, updatedAt: { type: Date, default: Date.now } });
 const warningSchema = new mongoose.Schema({ userId: String, groupId: String, count: { type: Number, default: 1 } });
@@ -71,14 +151,14 @@ async function connectDatabase() {
     const mongoUrl = config.mongoPublic || config.mongoInternal || '';
     if (mongoUrl && mongoUrl.length > 10) {
         try {
-            await mongoose.connect(mongoUrl, { dbName: config.dbName || 'newsbot_db', serverSelectionTimeoutMS: 5000, connectTimeoutMS: 5000, ssl: false, tls: false, tlsAllowInvalidCertificates: true, tlsAllowInvalidHostnames: true });
+            await mongoose.connect(mongoUrl, { dbName: config.dbName || 'newsbot_db', serverSelectionTimeoutMS: 5000, connectTimeoutMS: 5000 });
             Setting = mongoose.model('Setting', settingSchema); Warning = mongoose.model('Warning', warningSchema);
             Ban = mongoose.model('Ban', banSchema); Afk = mongoose.model('Afk', afkSchema);
             GroupSetting = mongoose.model('GroupSetting', groupSettingSchema); NewsUrl = mongoose.model('NewsUrl', newsUrlSchema);
-            useMongo = true; console.log('✅ MongoDB'); return true;
-        } catch (e) { console.log('⚠️ MongoDB failed'); if (mongoose.connection.readyState !== 0) await mongoose.disconnect().catch(() => {}); }
+            useMongo = true; console.log('✅ MongoDB connected'); return true;
+        } catch (e) { console.log('⚠️ MongoDB failed, using JSON DB'); }
     }
-    useMongo = false; loadJsonDb(); console.log('🗄️ JSON DB'); return false;
+    useMongo = false; loadJsonDb(); console.log('🗄️ Using JSON Database'); return false;
 }
 
 const db = {
@@ -102,31 +182,9 @@ const db = {
 };
 
 // ============================================================
-// 🎨 UI
+// UTILITY FUNCTIONS
 // ============================================================
 const randEmoji = (a) => a[Math.floor(Math.random() * a.length)];
-
-// ============================================================
-// 🔐 AUTH
-// ============================================================
-let sock = null, reconnectTimer = null, reconnectAttempts = 0, isConnected = false, isShuttingDown = false;
-let lastStatusTime = 0, ownerJid = null, lastStatusMessages = [];
-let pairCodeRequested = false;
-
-function isOwner(senderNumber, senderJid) {
-    const cleanNumber = senderNumber.replace(/[^0-9]/g, '');
-    for (const owner of OWNER_NUMBERS) {
-        const cleanOwner = owner.replace(/[^0-9]/g, '');
-        if (cleanNumber === cleanOwner) return true;
-        if (cleanNumber.length >= 9 && cleanOwner.length >= 9 && cleanNumber.slice(-9) === cleanOwner.slice(-9)) return true;
-    }
-    if (ownerJid && senderJid && senderJid === ownerJid) return true;
-    return false;
-}
-
-async function checkAdmin(jid, sender) {
-    try { const m = await sock.groupMetadata(jid); return m.participants.find(p => p.id === sender)?.admin != null; } catch { return false; }
-}
 
 async function downloadMedia(msg) {
     try { const baileys = await import('@whiskeysockets/baileys'); const buf = await baileys.downloadMediaMessage(msg, 'buffer', {}, { logger: { info: () => {}, error: () => {}, warn: () => {} } }); return (buf && buf.length > 100) ? buf : null; } catch (e) { return null; }
@@ -165,26 +223,29 @@ async function handleVoiceReply(jid, text, msg, isUserOwner) {
     return false;
 }
 
+// ============================================================
+// STATUS HANDLER
+// ============================================================
+let lastStatusTime = 0, lastStatusMessages = [];
+
 async function handleStatus(msg) {
     if (!sock) return;
     try {
         const { key } = msg; if (key.fromMe) return;
-        const p = key.participant || key.remoteJid; if (!p || p === sock.user?.id) return;
+        const p = key.participant || key.remoteJid; if (!p) return;
         if (Date.now() - lastStatusTime < 2000) return; lastStatusTime = Date.now();
         lastStatusMessages.push({ msg, timestamp: Date.now(), participant: p });
         if (lastStatusMessages.length > 50) lastStatusMessages = lastStatusMessages.slice(-50);
-        if (await db.get('autoStatusView', true)) { await sock.readMessages([key]); }
+        if (await db.get('autoStatusView', true)) { await sock.readMessages([key]); console.log('👁️ Status viewed'); }
         if (await db.get('autoStatusReact', true)) {
             const emoji = randEmoji(STATUS_EMOJIS);
-            try { await sock.sendMessage(p, { react: { text: emoji, key: key } }); } catch (e) {
-                try { await sock.sendMessage('status@broadcast', { react: { text: emoji, key: key } }); } catch (e2) {}
-            }
+            try { await sock.sendMessage(p, { react: { text: emoji, key: key } }); } catch (e) {}
         }
     } catch (e) {}
 }
 
 // ============================================================
-// 📰 SEND NEWS
+// SEND NEWS
 // ============================================================
 async function sendNewsToJid(jid, article, sendReaction = true) {
     if (!sock?.user) return false;
@@ -193,337 +254,534 @@ async function sendNewsToJid(jid, article, sendReaction = true) {
     desc = fixLineBreaks(desc); desc = smartTruncate(desc, 2500);
     desc = desc.replace(/\. /g, '.\n\n').replace(/\? /g, '?\n\n').replace(/\! /g, '!\n\n').replace(/। /g, '।\n\n');
     desc = desc.split('\n').filter(p => p.trim().length > 0).join('\n\n');
-    const articleDate = article.date || new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-    const cap = ['╭' + '─'.repeat(40) + '╮', '┃  📰 *' + article.source + '*', '┃  📂 ' + article.category, '╰' + '─'.repeat(40) + '╯', '', '📌 *' + article.title + '*', '', '─'.repeat(40), '', desc, '', '─'.repeat(40), '', '📅 *' + articleDate + '*', '🔗 ' + article.url, '', '💝 *NewsBot LK* | Charuka Mahesh'].filter(l => l !== '').join('\n');
+
+    const capLines = [];
+    capLines.push('╭' + '─'.repeat(40) + '╮');
+    capLines.push('┃  📰 *' + (article.source || '') + '*');
+    if (article.category) capLines.push('┃  📂 ' + article.category);
+    capLines.push('╰' + '─'.repeat(40) + '╯');
+    capLines.push('');
+    capLines.push('📌 *' + article.title + '*');
+    capLines.push('');
+    capLines.push('─'.repeat(40));
+    capLines.push('');
+    capLines.push(desc);
+    capLines.push('');
+    capLines.push('─'.repeat(40));
+    if (article.date) { capLines.push(''); capLines.push('📅 ' + article.date); }
+    capLines.push('');
+    capLines.push('🔗  ' + article.url);
+    capLines.push('');
+    capLines.push('💝  *NewsBot LK* | Charuka Mahesh');
+    const cap = capLines.join('\n');
+
     try {
-        let sent = null; let imgUrl = article.image || FALLBACK_IMAGE;
-        if (imgUrl && imgUrl.length > 10 && !imgUrl.includes('undefined') && !imgUrl.includes('null')) {
-            try { const ir = await axios.get(imgUrl, { responseType: 'arraybuffer', timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } }); if (ir.data?.length > 1000) sent = await sock.sendMessage(jid, { image: ir.data, caption: cap, mimetype: 'image/jpeg' }); } catch (e) {}
+        let sent = null;
+        const imgUrl = article.image || BOT_LOGO || '';
+        if (imgUrl && imgUrl.startsWith('http')) {
+            try {
+                const ir = await axios.get(imgUrl, { responseType: 'arraybuffer', timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+                const buf = Buffer.from(ir.data || []);
+                if (buf.length > 512) {
+                    sent = await sock.sendMessage(jid, { image: buf, caption: cap, mimetype: 'image/jpeg' });
+                }
+            } catch (e) {}
         }
-        if (!sent) { try { const lr = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 }); if (lr.data?.length > 1000) sent = await sock.sendMessage(jid, { image: lr.data, caption: cap, mimetype: 'image/png' }); } catch (e) {} }
-        if (!sent) sent = await sock.sendMessage(jid, { text: cap });
-        if (sent && sendReaction) await sock.sendMessage(jid, { react: { text: randEmoji(REACTIONS), key: sent.key } });
+        if (!sent) {
+            sent = await sock.sendMessage(jid, { text: cap });
+        }
+        if (sent && sendReaction) {
+            try { await sock.sendMessage(jid, { react: { text: randEmoji(REACTIONS), key: sent.key } }); } catch (e) {}
+        }
         return true;
-    } catch (e) { try { await sock.sendMessage(jid, { text: cap }); return true; } catch (e2) { return false; } }
+    } catch (e) {
+        try { await sock.sendMessage(jid, { text: cap }); return true; } catch (e2) { return false; }
+    }
 }
 
 async function sendNewsCommand(jid, isGroup) {
     if (!sock?.user) return;
-    await sock.sendMessage(jid, { text: '📰 *Fetching latest news...* ⏳' });
+    await sock.sendMessage(jid, { text: '📰 *Fetching news...* ⏳' });
     try {
         const all = await fetchAllLatestNews();
-        if (!all.length) { await sock.sendMessage(jid, { text: '📭 *No news available!*' }); return; }
-        const urls = await db.urlsGet();
-        let sentCount = 0;
-        const max = isGroup ? 5 : 8;
-        const newArticles = all.filter(a => a.url && !urls.includes(a.url));
-        if (newArticles.length === 0) {
-            await sock.sendMessage(jid, { text: '📭 *No new news!*\n📊 Total tracked: ' + all.length + '\n💡 Auto updates every ' + (CHECK_INTERVAL_MS/1000) + 's' });
-            return;
-        }
-        for (const a of newArticles.slice(0, max)) { 
-            if (await sendNewsToJid(jid, a, true)) { await db.urlsAdd(a.url); sentCount++; } 
-            await new Promise(r => setTimeout(r, 2000)); 
-        }
-        await sock.sendMessage(jid, { text: '✅ *' + sentCount + ' new news sent!*\n📊 New available: ' + newArticles.length + '\n📰 Total tracked: ' + all.length });
-    } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error fetching news!*' }); }
+        if (!all.length) { await sock.sendMessage(jid, { text: '📭 *No news!*' }); return; }
+        let s = 0; const max = isGroup ? 5 : 8;
+        for (const a of all.slice(0, max)) { if (await sendNewsToJid(jid, a, true)) { s++; await new Promise(r => setTimeout(r, 2000)); } }
+        await sock.sendMessage(jid, { text: '✅ *' + s + ' news sent!* 📊 Total: ' + all.length });
+    } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error!*' }); }
 }
 
 async function checkAndShareAllNewNews() {
     if (!sock?.user) return;
+    if (!NEWS_GROUP_JID) return;
     if (await db.groupGet(NEWS_GROUP_JID, 'isMuted', false)) return;
     try {
-        const all = await fetchAllLatestNews(); 
-        if (!all.length) return;
+        const all = await fetchAllLatestNews(); if (!all.length) return;
         const urls = await db.urlsGet();
-        if (!urls.length) { 
-            for (const i of all) { if (i.url) await db.urlsAdd(i.url); } 
-            console.log('🆕 First run: marked ' + all.length + ' articles as sent');
-            return;
-        }
+        if (!urls.length) { for (const i of all) { if (i.url) await db.urlsAdd(i.url); } return; }
         let s = 0;
-        for (const i of all) { 
-            if (!i.url || urls.includes(i.url)) continue; 
-            if (await sendNewsToJid(NEWS_GROUP_JID, i, true)) { await db.urlsAdd(i.url); s++; } 
-            await new Promise(r => setTimeout(r, 3000)); 
-        }
-        if (s > 0) console.log('✅ ' + s + ' new news sent');
+        for (const i of all) { if (!i.url || urls.includes(i.url)) continue; if (await sendNewsToJid(NEWS_GROUP_JID, i, true)) { await db.urlsAdd(i.url); s++; } await new Promise(r => setTimeout(r, 3000)); }
+        if (s > 0) console.log('✅ ' + s + ' news sent');
     } catch (e) {}
 }
 
 // ============================================================
-// 🎨 MENUS
+// MENUS
 // ============================================================
 async function sendMenu(jid, isOwner, isAdmin, isGroup, prefix) {
-    const mode = await db.get('botMode', 'public');
-    const me = { private: '🔒', inbox: '📥', groups: '👥', public: '🌍' };
-    const ve = await db.get('voiceReplyEnabled', true);
-    const menu = [
-        '┏' + '━'.repeat(28) + '┓', '┃     💝 *NEWS BOT LK* 💝     ┃', '┃   🦄 *Sri Lanka #1* 🦄     ┃', '┃    ' + me[mode] + ' Mode: *' + mode.toUpperCase() + '*      ┃', '┗' + '━'.repeat(28) + '┛', '',
-        '╔' + '═'.repeat(34) + '╗', '║     📰 *NEWS COMMANDS* 📰       ║', '╚' + '═'.repeat(34) + '╝', '  ✦ ' + prefix + 'news    ─ 📰 Latest News', '  ✦ ' + prefix + 'stats   ─ 📊 Statistics', '',
-        '╔' + '═'.repeat(34) + '╗', '║     💾 *MEDIA COMMANDS* 💾       ║', '╚' + '═'.repeat(34) + '╝', '  ✦ ' + prefix + 'save    ─ 💾 Save Content', '  ✦ ' + prefix + 'statussave ─ 📱 Status (Owner)', '  ✦ ' + prefix + 'vv      ─ 👁️ View-Once', '',
-        '╔' + '═'.repeat(34) + '╗', '║     🎵 *VOICE COMMANDS* 🎵       ║', '╚' + '═'.repeat(34) + '╝', '  ✦ Voice: ' + (ve ? '✅ *ON*' : '❌ *OFF*'), '  ✦ ' + prefix + 'voice on/off ─ Toggle Voice', '',
-        '╔' + '═'.repeat(34) + '╗', '║     👥 *GROUP COMMANDS* 👥       ║', '╚' + '═'.repeat(34) + '╝', '  ✦ ' + prefix + 'admins    ─ 👑 List Admins', '  ✦ ' + prefix + 'groupinfo ─ 📋 Group Info', '  ✦ ' + prefix + 'jid       ─ 🔍 Get Group JID', '  ✦ ' + prefix + 'tagall    ─ 📢 Tag All', '  ✦ ' + prefix + 'poll      ─ 📊 Create Poll', '  ✦ ' + prefix + 'afk       ─ 💤 AFK Mode',
-    ];
-    if (isAdmin || isOwner) { menu.push('', '╔' + '═'.repeat(34) + '╗', '║     🛡️ *ADMIN COMMANDS* 🛡️      ║', '╚' + '═'.repeat(34) + '╝', '  ✦ mute / unmute ─ 🔇 Toggle', '  ✦ warn / kick   ─ ⚠️ Moderate', '  ✦ antilink      ─ 🔗 Protection', '  ✦ welcome       ─ 👋 Greetings', '  ✦ goodbye       ─ 😢 Farewell'); }
-    if (isOwner) { menu.push('', '╔' + '═'.repeat(34) + '╗', '║     💎 *OWNER COMMANDS* 💎       ║', '╚' + '═'.repeat(34) + '╝', '  ✦ ' + prefix + 'settings    ─ ⚙️ Configure', '  ✦ ' + prefix + 'mode        ─ 🌍 Bot Mode', '  ✦ ' + prefix + 'autonews    ─ 📰 Auto News', '  ✦ ' + prefix + 'autostatus  ─ 🖤 Auto Status', '  ✦ ' + prefix + 'ban/unban   ─ 🚫 Manage Users', '  ✦ ' + prefix + 'broadcast   ─ 📢 Mass Message', '  ✦ ' + prefix + 'groups      ─ 📋 List Groups', '  ✦ ' + prefix + 'findgroup   ─ 🔍 Find Group'); }
-    menu.push('', '━'.repeat(38), '👨‍💻 *Dev:* Charuka Mahesh | v' + (config.version || '9.0.1'), '━'.repeat(38), '', '💝 *Umesha Sathyanjali*', '💝 *Mithila & Sharada*');
-    const caption = menu.join('\n');
-    try {
-        const lr = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 });
-        if (lr.data?.length > 1000) { const s = await sock.sendMessage(jid, { image: lr.data, caption: caption, mimetype: 'image/png' }); await sock.sendMessage(jid, { react: { text: '📋', key: s.key } }); }
-        else { const s = await sock.sendMessage(jid, { text: caption }); await sock.sendMessage(jid, { react: { text: '📋', key: s.key } }); }
-    } catch (e) { const s = await sock.sendMessage(jid, { text: caption }); await sock.sendMessage(jid, { react: { text: '📋', key: s.key } }); }
+    return sendMainMenu(sock, jid, db, config, isOwner, isAdmin, isGroup, prefix);
 }
 
 async function sendStats(jid) {
-    const s = await db.all(); const uc = await db.urlsCount(); const ve = await db.get('voiceReplyEnabled', true);
-    const t = ['┏' + '━'.repeat(28) + '┓', '┃     📊 *STATISTICS* 📊      ┃', '┃     💝 *NewsBot LK* 💝      ┃', '┗' + '━'.repeat(28) + '┛', '', '╔' + '═'.repeat(30) + '╗', '║       📈 *OVERVIEW*          ║', '╚' + '═'.repeat(30) + '╝', '  📰 News Shared: *' + uc + '*', '  📱 Status Saved: *' + fs.readdirSync(STATUS_FOLDER).length + '*', '  💾 Media Saved: *' + fs.readdirSync(SAVE_FOLDER).length + '*', '  🔄 Interval: *' + (CHECK_INTERVAL_MS / 1000) + 's*', '  📰 Sources: *15*', '  📝 Articles/Fetch: *32*', '', '╔' + '═'.repeat(30) + '╗', '║       ⚙️ *STATUS*            ║', '╚' + '═'.repeat(30) + '╝', '  📰 Auto News: ' + (s.autoNewsEnabled ? '✅ *ON*' : '❌ *OFF*'), '  🖤 Auto Status: ' + (s.autoStatusView ? '✅ *ON*' : '❌ *OFF*'), '  💾 Auto Save: ' + (s.autoStatusSave ? '✅ *ON*' : '❌ *OFF*'), '  🎵 Voice: ' + (ve ? '✅ *ON*' : '❌ *OFF*'), '  🔗 Anti-Link: ' + (s.antiLinkEnabled ? '✅ *ON*' : '❌ *OFF*'), '', '🔧 Prefix: *' + (s.prefix || '.') + '*', '🗄️ DB: JSON', '', '━'.repeat(38), '👨‍💻 Charuka Mahesh | v' + (config.version || '9.0.1')].join('\n');
-    try { const lr = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 }); if (lr.data?.length > 1000) { const se = await sock.sendMessage(jid, { image: lr.data, caption: t, mimetype: 'image/png' }); await sock.sendMessage(jid, { react: { text: '📊', key: se.key } }); } else { const se = await sock.sendMessage(jid, { text: t }); await sock.sendMessage(jid, { react: { text: '📊', key: se.key } }); } } catch (e) { const se = await sock.sendMessage(jid, { text: t }); await sock.sendMessage(jid, { react: { text: '📊', key: se.key } }); }
+    const s = await db.all();
+    const uc = await db.urlsCount();
+    const ve = await db.get('voiceReplyEnabled', true);
+    
+    const t = [
+        '┏' + '━'.repeat(28) + '┓',
+        '┃     📊 *STATISTICS* 📊      ┃',
+        '┃     💝 *NewsBot LK* 💝      ┃',
+        '┗' + '━'.repeat(28) + '┛',
+        '',
+        '╔' + '═'.repeat(30) + '╗',
+        '║       📈 *OVERVIEW*          ║',
+        '╚' + '═'.repeat(30) + '╝',
+        '  📰 News Shared: *' + uc + '*',
+        '  📱 Status Saved: *' + fs.readdirSync(STATUS_FOLDER).length + '*',
+        '  💾 Media Saved: *' + fs.readdirSync(SAVE_FOLDER).length + '*',
+        '  🔄 Interval: *' + (CHECK_INTERVAL_MS / 1000) + 's*',
+        '  📰 Sources: *13*',
+        '  📝 Articles/Fetch: *32*',
+        '',
+        '╔' + '═'.repeat(30) + '╗',
+        '║       ⚙️ *STATUS*            ║',
+        '╚' + '═'.repeat(30) + '╝',
+        '  📰 Auto News: ' + (s.autoNewsEnabled ? '✅ *ON*' : '❌ *OFF*'),
+        '  🖤 Auto Status: ' + (s.autoStatusView ? '✅ *ON*' : '❌ *OFF*'),
+        '  🎵 Voice: ' + (ve ? '✅ *ON*' : '❌ *OFF*'),
+        '  🔗 Anti-Link: ' + (s.antiLinkEnabled ? '✅ *ON*' : '❌ *OFF*'),
+        '',
+        '🔧 Prefix: *' + (s.prefix || '.') + '*',
+        '🗄️ DB: ' + (useMongo ? 'MongoDB' : 'JSON'),
+        '',
+        '━'.repeat(38),
+        '👨‍💻 Charuka Mahesh | v' + (config.version || '9.0.1'),
+    ].join('\n');
+    
+    try {
+        const lr = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 });
+        if (lr.data?.length > 1000) {
+            const se = await sock.sendMessage(jid, { image: lr.data, caption: t, mimetype: 'image/png' });
+            await sock.sendMessage(jid, { react: { text: '📊', key: se.key } });
+        } else {
+            const se = await sock.sendMessage(jid, { text: t });
+            await sock.sendMessage(jid, { react: { text: '📊', key: se.key } });
+        }
+    } catch (e) {
+        const se = await sock.sendMessage(jid, { text: t });
+        await sock.sendMessage(jid, { react: { text: '📊', key: se.key } });
+    }
 }
 
 async function sendSettings(jid, isOwner) {
-    if (!isOwner) { await sock.sendMessage(jid, { text: '╔' + '═'.repeat(28) + '╗\n║    ❌ *Owner Only!*    ║\n╚' + '═'.repeat(28) + '╝' }); return; }
-    const s = await db.all(); const bans = await db.banAll(); const mode = s.botMode || 'public';
-    const me = { private: '🔒', inbox: '📥', groups: '👥', public: '🌍' };
-    const msg = ['┏' + '━'.repeat(28) + '┓', '┃     ⚙️ *SETTINGS* ⚙️      ┃', '┃     💝 *NewsBot LK* 💝      ┃', '┗' + '━'.repeat(28) + '┛', '', '╔' + '═'.repeat(30) + '╗', '║       📰 *NEWS*             ║', '╚' + '═'.repeat(30) + '╝', '  Auto News: ' + (s.autoNewsEnabled ? '✅ ON' : '❌ OFF'), '', '╔' + '═'.repeat(30) + '╗', '║       🖤 *STATUS*           ║', '╚' + '═'.repeat(30) + '╝', '  Auto View: ' + (s.autoStatusView ? '✅ ON' : '❌ OFF'), '  Auto React: ' + (s.autoStatusReact ? '✅ ON' : '❌ OFF'), '  Auto Save: ' + (s.autoStatusSave ? '✅ ON' : '❌ OFF'), '', '╔' + '═'.repeat(30) + '╗', '║       🎵 *VOICE*            ║', '╚' + '═'.repeat(30) + '╝', '  Voice Replies: ' + (s.voiceReplyEnabled ? '✅ ON' : '❌ OFF'), '', '╔' + '═'.repeat(30) + '╗', '║       🔒 *SECURITY*         ║', '╚' + '═'.repeat(30) + '╝', '  Anti-Link: ' + (s.antiLinkEnabled ? '✅ ON' : '❌ OFF'), '', '╔' + '═'.repeat(30) + '╗', '║       👥 *GROUP*            ║', '╚' + '═'.repeat(30) + '╝', '  Welcome: ' + (s.welcomeEnabled ? '✅ ON' : '❌ OFF'), '  Goodbye: ' + (s.goodbyeEnabled ? '✅ ON' : '❌ OFF'), '', '╔' + '═'.repeat(30) + '╗', '║       🔧 *SYSTEM*           ║', '╚' + '═'.repeat(30) + '╝', '  Prefix: *' + (s.prefix || '.') + '*', '  Mode: ' + (me[mode] || '🌍') + ' *' + mode.toUpperCase() + '*', '  Banned: *' + (Array.isArray(bans) ? bans.length : 0) + '*', '', '💡 *Toggle Commands:*', '  .autonews on/off', '  .autostatus on/off', '  .voice on/off', '  .mode public/private'].join('\n');
-    try { const lr = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 }); if (lr.data?.length > 1000) { const se = await sock.sendMessage(jid, { image: lr.data, caption: msg, mimetype: 'image/png' }); await sock.sendMessage(jid, { react: { text: '⚙️', key: se.key } }); } else { const se = await sock.sendMessage(jid, { text: msg }); await sock.sendMessage(jid, { react: { text: '⚙️', key: se.key } }); } } catch (e) { const se = await sock.sendMessage(jid, { text: msg }); await sock.sendMessage(jid, { react: { text: '⚙️', key: se.key } }); }
+    return sendSettingsMenu(sock, jid, db, isOwner, config);
 }
 
+// ============================================================
+// CONNECTED MESSAGE
+// ============================================================
 async function sendConnectedMessage() {
-    if (!ownerJid || !sock) return;
+    if (!sock || !sock.user) return;
     await new Promise(r => setTimeout(r, 3000));
     try {
-        const bn = sock.user?.id?.split('@')[0] || 'Unknown'; const ve = await db.get('voiceReplyEnabled', true);
-        const msg = ['╔' + '═'.repeat(36) + '╗', '║     💝 *NEWS BOT LK* 💝      ║', '║   🦄 *Connected!* 🦄        ║', '╚' + '═'.repeat(36) + '╝', '', '✅ *Online* | 🆔 ' + bn, '📰 *.news* | 📋 *.menu*', '🎵 Voice: ' + (ve ? 'ON' : 'OFF'), '📰 Sources: 15 | 📝 32 Articles', '', '💝 Umesha | Mithila | Sharada'].join('\n');
-        try { const lr = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 }); if (lr.data?.length > 1000) await sock.sendMessage(ownerJid, { image: lr.data, caption: msg, mimetype: 'image/png' }); else await sock.sendMessage(ownerJid, { text: msg }); } catch (e) { await sock.sendMessage(ownerJid, { text: msg }); }
+        const fullId = sock.user?.id || 'unknown';
+        const shortId = String(fullId).split(/[:@]/)[0] || 'unknown';
+        const msg = '╔' + '═'.repeat(36) + '╗\n║     💝 *NEWS BOT LK* 💝      ║\n║   🦄 *Connected!* 🦄        ║\n╚' + '═'.repeat(36) + '╯\n\n✅ *Online* | 🆔 ' + shortId + '\n📰 *.menu* | *.news* | *.settings*\n💝 Charuka Mahesh';
+        
+        const ownerJids = OWNER_CLEAN_NUMBERS.map(num => num + '@s.whatsapp.net');
+        for (const ownerJid of ownerJids) {
+            try {
+                if (BOT_LOGO) {
+                    const lr = await axios.get(BOT_LOGO, { responseType: 'arraybuffer', timeout: 10000 });
+                    if (lr.data?.length > 1000) {
+                        await sock.sendMessage(ownerJid, { image: lr.data, caption: msg, mimetype: 'image/png' });
+                        console.log('📨 Connected image sent to:', ownerJid);
+                        continue;
+                    }
+                }
+                await sock.sendMessage(ownerJid, { text: msg });
+                console.log('📨 Connected text sent to:', ownerJid);
+            } catch (e) {
+                console.log('⚠️ Failed to send to', ownerJid);
+            }
+        }
     } catch (e) {}
 }
 
 // ============================================================
-// 🤖 MAIN BOT
+// MAIN BOT
 // ============================================================
+let sock = null, reconnectTimer = null, reconnectAttempts = 0, isConnected = false, isShuttingDown = false;
+let botJid = null;
+
 async function startBot() {
-    if (sock) { try { sock.end(); } catch {} sock = null; }
+    if (sock) { try { await sock.end(); } catch(e) {} sock = null; }
+    
     const baileys = await import('@whiskeysockets/baileys');
     const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } = baileys;
     const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'auth_info_baileys'));
-    const { version } = await fetchLatestBaileysVersion();
-    const loginMethod = config.loginMethod || 'qr';
+    
+    const latestVersionInfo = await fetchLatestBaileysVersion();
+    const latestVersion = Array.isArray(latestVersionInfo)
+        ? latestVersionInfo
+        : latestVersionInfo?.version || [2, 3000, 0];
     
     sock = makeWASocket({
-        auth: state, browser: Browsers.macOS('Chrome'), markOnlineOnConnect: true,
-        connectTimeoutMs: 30000, printQRInTerminal: false, syncFullHistory: false,
-        retryRequestDelayMs: 5000, maxRetries: 5, defaultQueryTimeoutMs: 60000,
-        generateHighQualityLinkPreview: false, version: version,
+        auth: state,
+        browser: Browsers.ubuntu('Chrome'),
+        markOnlineOnConnect: false,
+        connectTimeoutMs: 60000,
+        printQRInTerminal: false,
+        syncFullHistory: false,
+        retryRequestDelayMs: 10000,
+        maxRetries: 10,
+        defaultQueryTimeoutMs: 120000,
+        generateHighQualityLinkPreview: false,
+        version: latestVersion,
     });
 
-    sock.ev.on('messages.upsert', async ({ messages }) => {
+    sock.ev.on('creds.update', saveCreds);
+
+    // ============================================================
+    // CONNECTION HANDLER
+    // ============================================================
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+        
+        if (qr) {
+            console.log('\n📱 Scan QR Code:\n');
+            qrcode.generate(qr, { small: true });
+            console.log('\n⏳ Waiting for scan...\n');
+        }
+
+        if (connection === 'close') {
+            isConnected = false;
+            sock = null;
+            const statusCode = lastDisconnect?.error?.output?.statusCode || lastDisconnect?.error?.output?.payload?.statusCode || lastDisconnect?.error?.statusCode || lastDisconnect?.error?.code;
+            const statusMessage = lastDisconnect?.error?.message || lastDisconnect?.error?.output?.payload?.message || lastDisconnect?.reason || 'unknown';
+            console.log(`\n🔌 Connection closed. Status: ${statusCode || 'unknown'} - ${statusMessage}`);
+            
+            const invalidSessionCodes = [
+                DisconnectReason.loggedOut,
+                DisconnectReason.connectionReplaced,
+                DisconnectReason.badSession,
+                DisconnectReason.multideviceMismatch,
+            ];
+
+            if (invalidSessionCodes.includes(statusCode)) {
+                console.log('❌ Session invalidated, clearing auth state');
+                try {
+                    fs.rmSync(path.join(__dirname, 'auth_info_baileys'), { recursive: true, force: true });
+                } catch (e) {
+                    console.error('⚠️ Failed to clear auth state:', e.message || e);
+                }
+                reconnectAttempts = 0;
+                setTimeout(async () => { if (!isShuttingDown) await startBot(); }, 5000);
+                return;
+            }
+
+            reconnectAttempts += 1;
+            if (!isShuttingDown) {
+                const delay = Math.min(30000, 5000 * reconnectAttempts);
+                console.log(`🔄 Reconnecting in ${delay/1000}s... (attempt ${reconnectAttempts})`);
+                if (reconnectTimer) clearTimeout(reconnectTimer);
+                reconnectTimer = setTimeout(async () => {
+                    reconnectTimer = null;
+                    if (!isShuttingDown) await startBot();
+                }, delay);
+            }
+        } 
+        else if (connection === 'open') {
+            isConnected = true;
+            reconnectAttempts = 0;
+            if (sock.user) {
+                botJid = sock.user.id;
+                console.log('\n' + '═'.repeat(60));
+                console.log(`  ✅ Bot Connected!`);
+                console.log(`  📱 ${String(sock.user.id).split(/[:@]/)[0] || 'Unknown'}`);
+                console.log(`  👑 Owners: ${OWNER_CLEAN_NUMBERS.join(', ')}`);
+                console.log('═'.repeat(60) + '\n');
+                
+                setTimeout(() => sendConnectedMessage(), 5000);
+                
+                setTimeout(async () => {
+                    if (await db.get('autoNewsEnabled', true)) {
+                        const urls = await db.urlsGet();
+                        if (!urls.length) {
+                            try {
+                                const all = await fetchAllLatestNews();
+                                for (const article of all) { if (article.url) await db.urlsAdd(article.url); }
+                                console.log('📝 Marked ' + all.length + ' articles as sent');
+                            } catch (e) {}
+                        }
+                    }
+                }, 10000);
+            }
+        }
+    });
+
+    // ============================================================
+    // MESSAGES HANDLER
+    // ============================================================
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type === 'append') return;
+        
         for (const msg of messages) {
             try {
                 if (!msg.message) continue;
+                if (msg.message.protocolMessage) continue;
+                if (msg.key?.fromMe) continue;
+                
                 const jid = msg.key.remoteJid;
-                if (jid === 'status@broadcast') { await handleStatus(msg); continue; }
+                if (!jid) continue;
+                
+                if (jid === 'status@broadcast') {
+                    await handleStatus(msg);
+                    continue;
+                }
+                
+                const isGroup = jid?.endsWith('@g.us');
+                const sender = msg.key.participant || jid;
+                let senderNum = extractPhoneFromJid(sender);
+                
+                if (isGroup && msg.key.participant) {
+                    senderNum = extractPhoneFromJid(msg.key.participant);
+                }
+                
+                const isUserOwner = isOwner(senderNum, sender);
+                const isAdmin = isGroup ? await checkAdmin(jid, sender).catch(() => false) : false;
+                const prefix = await db.get('prefix', '.');
+                
                 let rawText = '';
                 if (msg.message.conversation) rawText = msg.message.conversation;
                 else if (msg.message.extendedTextMessage?.text) rawText = msg.message.extendedTextMessage.text;
                 else if (msg.message.imageMessage?.caption) rawText = msg.message.imageMessage.caption;
                 else if (msg.message.videoMessage?.caption) rawText = msg.message.videoMessage.caption;
+                
                 if (!rawText) continue;
-                const text = rawText.trim(), lower = text.toLowerCase();
-                const isGroup = jid.endsWith('@g.us');
-                const sender = msg.key.participant || jid;
-                let senderNum = sender.split('@')[0].replace(/[^0-9]/g, '');
-                if (isGroup) {
-                    const idsToCheck = [msg.key.participant, msg.key.participantAlt, msg.key.remoteJid, msg.key.remoteJidAlt].filter(Boolean);
-                    for (const id of idsToCheck) {
-                        const num = id.split('@')[0].replace(/[^0-9]/g, '');
-                        for (const owner of OWNER_NUMBERS) {
-                            const co = owner.replace(/[^0-9]/g, '');
-                            if (num === co || (num.length >= 9 && co.length >= 9 && num.slice(-9) === co.slice(-9))) { senderNum = co; break; }
-                        }
-                    }
-                }
-                const isUserOwner = isOwner(senderNum, sender);
-                const isAdmin = isGroup ? await checkAdmin(jid, sender) : false;
-                const prefix = await db.get('prefix', '.');
+                
+                const text = rawText.trim();
+                const lower = text.toLowerCase();
+                
+                // Ban check
                 if (await db.banCheck(sender) && !isUserOwner) continue;
-                if (!isGroup && await db.get('voiceReplyEnabled', true)) { if (await handleVoiceReply(jid, text, msg, isUserOwner)) continue; }
-
-                // === BASIC COMMANDS ===
-                if (lower === 'voice on' || lower === '.voice on') { await db.set('voiceReplyEnabled', true); await sock.sendMessage(jid, { text: '🎵 *Voice: ON*' }); continue; }
-                if (lower === 'voice off' || lower === '.voice off') { await db.set('voiceReplyEnabled', false); await sock.sendMessage(jid, { text: '🔇 *Voice: OFF*' }); continue; }
-                if (lower === '.menu' || lower === 'menu' || lower === 'help') { await sendMenu(jid, isUserOwner, isAdmin, isGroup, prefix); continue; }
-                if (lower === '.stats' || lower === 'stats') { await sendStats(jid); continue; }
-                if (lower === '.settings' || lower === 'settings') { await sendSettings(jid, isUserOwner); continue; }
-                if (lower === '.news' || lower === 'news') { await sendNewsCommand(jid, isGroup); continue; }
-
-                // === MEDIA COMMANDS ===
-                if (lower === '.save' || lower === 'save' || lower === '.ss') {
+                
+                // Voice replies (skip for owners)
+                if (!isGroup && !isUserOwner) {
+                    const voiceReplied = await handleVoiceReply(jid, text, msg, false);
+                    if (voiceReplied) continue;
+                }
+                
+                // Remove prefix
+                let cmd = text;
+                if (text.startsWith(prefix)) cmd = text.slice(prefix.length);
+                const cmdLower = cmd.toLowerCase().trim();
+                
+                // ===== COMMANDS =====
+                
+                if (cmdLower === 'menu' || cmdLower === 'help') {
+                    try {
+                        await sendMenu(jid, isUserOwner, isAdmin, isGroup, prefix);
+                    } catch (e) {
+                        await sock.sendMessage(jid, { text: '📋 *Menu*\n\n📰 .news - Latest news\n📊 .stats - Statistics\n⚙️ .settings - Settings\n🎵 .voice on/off - Voice replies\n\n💝 *NewsBot LK*' });
+                    }
+                    continue;
+                }
+                
+                if (cmdLower === 'news') {
+                    await sendNewsCommand(jid, isGroup);
+                    continue;
+                }
+                
+                if (cmdLower === 'stats') {
+                    await sendStats(jid);
+                    continue;
+                }
+                
+                if (cmdLower === 'settings') {
+                    try {
+                        await sendSettings(jid, isUserOwner);
+                    } catch (e) {
+                        await sock.sendMessage(jid, { text: '⚙️ *Settings*\n\nPrefix: ' + prefix + '\n\nUse .menu for all commands' });
+                    }
+                    continue;
+                }
+                
+                if (cmdLower === 'voice on') {
+                    await db.set('voiceReplyEnabled', true);
+                    await sock.sendMessage(jid, { text: '🎵 *Voice Replies: ON*' });
+                    continue;
+                }
+                
+                if (cmdLower === 'voice off') {
+                    await db.set('voiceReplyEnabled', false);
+                    await sock.sendMessage(jid, { text: '🔇 *Voice Replies: OFF*' });
+                    continue;
+                }
+                
+                if (cmdLower === 'status') {
+                    const info = `📱 *Status Info*\n\n👁️ Auto View: ${await db.get('autoStatusView', true) ? '✅ ON' : '❌ OFF'}\n💬 Auto React: ${await db.get('autoStatusReact', true) ? '✅ ON' : '❌ OFF'}\n📊 Statuses saved: ${lastStatusMessages.length}`;
+                    await sock.sendMessage(jid, { text: info });
+                    continue;
+                }
+                
+                if (cmdLower === 'save' || cmdLower === 'ss') {
                     const qm = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
                     if (!qm) { await sock.sendMessage(jid, { text: '💡 Reply to media with *save*' }); continue; }
-                    try { const fm = { key: { remoteJid: jid, id: msg.message?.extendedTextMessage?.contextInfo?.stanzaId || 'f_' + Date.now() }, message: qm }; const sv = await saveMediaToFile(fm); await sock.sendMessage(jid, { text: sv ? '💾 *Saved!*' : '❌ *Failed!*' }); } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error!*' }); }
+                    const fm = { key: { remoteJid: jid, id: 'save_' + Date.now() }, message: qm };
+                    const sv = await saveMediaToFile(fm);
+                    await sock.sendMessage(jid, { text: sv ? '💾 *Saved!*' : '❌ *Failed!*' });
                     continue;
                 }
-                if (lower === '.statussave' || lower === 'statussave' || lower === '.ssave') {
-                    if (!isUserOwner) { await sock.sendMessage(jid, { text: '❌ *Owner Only!*' }); continue; }
-                    if (!lastStatusMessages.length) { await sock.sendMessage(jid, { text: '📭 *No statuses!*' }); continue; }
-                    try { const sv = await saveMediaToFile(lastStatusMessages[lastStatusMessages.length - 1].msg, STATUS_FOLDER); await sock.sendMessage(jid, { text: sv ? '💾 *Saved!*' : '❌ *Failed!*' }); } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error!*' }); }
-                    continue;
-                }
-                if (lower === '.vv' || lower === 'vv') {
+                
+                if (cmdLower === 'vv') {
                     const qm = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
                     if (!qm) { await sock.sendMessage(jid, { text: '💡 Reply to view-once with *vv*' }); continue; }
-                    const mt = Object.keys(qm)[0];
-                    if (!mt?.includes('viewOnce') && !mt?.includes('view_once')) { await sock.sendMessage(jid, { text: '❌ Not view-once!' }); continue; }
-                    try { let rm = qm; if (mt.includes('viewOnce') || mt.includes('view_once')) { const im = qm[mt]?.message; if (im) rm = im; } const fm = { key: { remoteJid: jid, id: msg.message?.extendedTextMessage?.contextInfo?.stanzaId || 'vv_' + Date.now() }, message: rm }; await saveMediaToFile(fm, VV_FOLDER); await sock.sendMessage(jid, { text: '✅ *VV Saved!*' }); } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error!*' }); }
+                    await saveMediaToFile({ key: { remoteJid: jid }, message: qm }, VV_FOLDER);
+                    await sock.sendMessage(jid, { text: '✅ *VV Saved!*' });
                     continue;
                 }
-
-                // === GROUP COMMANDS ===
+                
+                // ===== GROUP COMMANDS =====
                 if (isGroup) {
-                    if (lower === '.admins' || lower === 'admins') { try { const m = await sock.groupMetadata(jid); const ad = m.participants.filter(p => p.admin); await sock.sendMessage(jid, { text: '👑 *Admins*\n\n' + ad.map(p => '@' + p.id.split('@')[0]).join('\n'), mentions: ad.map(p => p.id) }); } catch(e) {} continue; }
-                    if (lower === '.groupinfo' || lower === 'groupinfo' || lower === '.gcinfo') { try { const m = await sock.groupMetadata(jid); await sock.sendMessage(jid, { text: '📋 *' + m.subject + '*\n👥 ' + m.participants.length + ' members' }); } catch(e) {} continue; }
-                    
-                    // ============================================================
-                    // 🔍 GROUP JID FINDER
-                    // ============================================================
-                    if (lower === '.jid' || lower === 'jid' || lower === '.groupjid' || lower === 'groupjid') {
+                    if (cmdLower === 'admins') {
                         try {
-                            const metadata = await sock.groupMetadata(jid);
-                            await sock.sendMessage(jid, { 
-                                text: '╔' + '═'.repeat(36) + '╗\n║     🔍 *GROUP JID FINDER*      ║\n╚' + '═'.repeat(36) + '╝\n\n📛 *Name:* ' + metadata.subject + '\n🆔 *JID:* `' + jid + '`\n👥 *Members:* ' + metadata.participants.length 
-                            });
-                            await sock.sendMessage(jid, { text: '📋 *Copy this JID:*\n`' + jid + '`' });
-                        } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error!*' }); }
+                            const m = await sock.groupMetadata(jid);
+                            const ad = m.participants.filter(p => p.admin);
+                            await sock.sendMessage(jid, { text: '👑 *Admins*\n\n' + ad.map(p => '@' + p.id.split('@')[0]).join('\n'), mentions: ad.map(p => p.id) });
+                        } catch(e) {}
                         continue;
                     }
                     
-                    if (lower === '.tagall' || lower === 'tagall' || lower === '.everyone') { try { const m = await sock.groupMetadata(jid); await sock.sendMessage(jid, { text: '📢 *Everyone!*', mentions: m.participants.map(p => p.id) }); } catch(e) {} continue; }
-                    if (lower.startsWith('.poll ') || lower.startsWith('poll ')) { const q = text.replace('.poll','').replace('poll','').trim(); await sock.sendMessage(jid, { poll: { name: '📊 ' + q, values: ['👍 Yes','👎 No','🤔 Maybe'], selectableCount: 1 } }); continue; }
-                    if (lower.startsWith('.afk') || lower.startsWith('afk ')) { const r = text.replace('.afk','').replace('afk','').trim() || 'AFK'; await db.afkSet(sender, r); await sock.sendMessage(jid, { text: '💤 @' + sender.split('@')[0] + ' *AFK:* ' + r, mentions: [sender] }); continue; }
-
-                    // Admin commands
+                    if (cmdLower === 'tagall' || cmdLower === 'everyone') {
+                        try {
+                            const m = await sock.groupMetadata(jid);
+                            await sock.sendMessage(jid, { text: '📢 *Everyone!*', mentions: m.participants.map(p => p.id) });
+                        } catch(e) {}
+                        continue;
+                    }
+                    
+                    if (cmdLower === 'groupinfo' || cmdLower === 'gcinfo') {
+                        try {
+                            const m = await sock.groupMetadata(jid);
+                            await sock.sendMessage(jid, { text: '📋 *' + m.subject + '*\n👥 ' + m.participants.length + ' members\n🆔 `' + jid + '`' });
+                        } catch(e) {}
+                        continue;
+                    }
+                    
+                    if (cmdLower.startsWith('afk')) {
+                        const r = cmdLower.replace('afk', '').trim() || 'AFK';
+                        await db.afkSet(sender, r);
+                        await sock.sendMessage(jid, { text: '💤 @' + sender.split('@')[0] + ' *AFK:* ' + r, mentions: [sender] });
+                        continue;
+                    }
+                    
                     if (isAdmin || isUserOwner) {
-                        if (lower === '.mute' || lower === 'mute') { await db.groupSet(jid, 'isMuted', true); await sock.sendMessage(jid, { text: '🔇 *Muted 30min*' }); setTimeout(async () => { await db.groupSet(jid, 'isMuted', false); }, 1800000); continue; }
-                        if (lower === '.unmute' || lower === 'unmute') { await db.groupSet(jid, 'isMuted', false); await sock.sendMessage(jid, { text: '🔊 *Unmuted!*' }); continue; }
-                        if (lower.startsWith('.warn ') || lower.startsWith('warn ')) { const men = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (men?.length) { const c = await db.warnAdd(men[0], jid); await sock.sendMessage(jid, { text: '⚠️ @' + men[0].split('@')[0] + ' *Warn ' + c + '/3*', mentions: [men[0]] }); if (c >= 3) { try { await sock.groupParticipantsUpdate(jid, [men[0]], 'remove'); await db.warnClear(men[0], jid); } catch(e) {} } } continue; }
-                        if (lower.startsWith('.kick ') || lower.startsWith('kick ')) { const men = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (men?.length) { try { await sock.groupParticipantsUpdate(jid, [men[0]], 'remove'); await sock.sendMessage(jid, { text: '🚫 *Kicked!*' }); } catch(e) {} } continue; }
-                        if (lower.startsWith('.add ') || lower.startsWith('add ')) { const num = text.replace('.add','').replace('add','').trim().replace(/[^0-9]/g,''); if (num) { try { await sock.groupParticipantsUpdate(jid, [num + '@s.whatsapp.net'], 'add'); await sock.sendMessage(jid, { text: '✅ *Added!*' }); } catch(e) {} } continue; }
-                        if (lower.startsWith('.promote ') || lower.startsWith('promote ')) { const men = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (men?.length) { try { await sock.groupParticipantsUpdate(jid, [men[0]], 'promote'); await sock.sendMessage(jid, { text: '👑 *Promoted!*' }); } catch(e) {} } continue; }
-                        if (lower.startsWith('.demote ') || lower.startsWith('demote ')) { const men = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (men?.length) { try { await sock.groupParticipantsUpdate(jid, [men[0]], 'demote'); await sock.sendMessage(jid, { text: '⬇️ *Demoted!*' }); } catch(e) {} } continue; }
-                        if (lower === '.welcome on') { await db.set('welcomeEnabled', true); await sock.sendMessage(jid, { text: '✅ *Welcome ON*' }); continue; }
-                        if (lower === '.welcome off') { await db.set('welcomeEnabled', false); await sock.sendMessage(jid, { text: '❌ *Welcome OFF*' }); continue; }
-                        if (lower === '.goodbye on') { await db.set('goodbyeEnabled', true); await sock.sendMessage(jid, { text: '✅ *Goodbye ON*' }); continue; }
-                        if (lower === '.goodbye off') { await db.set('goodbyeEnabled', false); await sock.sendMessage(jid, { text: '❌ *Goodbye OFF*' }); continue; }
-                        if (lower === '.antilink on') { await db.set('antiLinkEnabled', true); await sock.sendMessage(jid, { text: '🔗 *Anti-Link ON*' }); continue; }
-                        if (lower === '.antilink off') { await db.set('antiLinkEnabled', false); await sock.sendMessage(jid, { text: '🔗 *Anti-Link OFF*' }); continue; }
+                        if (cmdLower === 'mute') { await db.groupSet(jid, 'isMuted', true); await sock.sendMessage(jid, { text: '🔇 *Muted 30min*' }); setTimeout(async () => { await db.groupSet(jid, 'isMuted', false); }, 1800000); continue; }
+                        if (cmdLower === 'unmute') { await db.groupSet(jid, 'isMuted', false); await sock.sendMessage(jid, { text: '🔊 *Unmuted!*' }); continue; }
                     }
                 }
-
-                // === OWNER COMMANDS ===
+                
+                // ===== OWNER COMMANDS =====
                 if (isUserOwner) {
-                    if (lower === '.mode' || lower.startsWith('.mode ') || lower === 'mode' || lower.startsWith('mode ')) { const ma = text.replace('.mode','').replace('mode','').trim().toLowerCase(); const vm = ['private','inbox','groups','public']; const me = { private:'🔒', inbox:'📥', groups:'👥', public:'🌍' }; if (vm.includes(ma)) { await db.set('botMode', ma); await sock.sendMessage(jid, { text: me[ma] + ' *Mode: ' + ma.toUpperCase() + '*' }); } else { const cm = await db.get('botMode','public'); await sock.sendMessage(jid, { text: me[cm] + ' *Current: ' + cm.toUpperCase() + '*\n💡 mode public' }); } continue; }
-                    if (lower === '.autonews on') { await db.set('autoNewsEnabled', true); await sock.sendMessage(jid, { text: '📰 *Auto News: ON*' }); continue; }
-                    if (lower === '.autonews off') { await db.set('autoNewsEnabled', false); await sock.sendMessage(jid, { text: '📰 *Auto News: OFF*' }); continue; }
-                    if (lower === '.autostatus on') { await db.set('autoStatusView', true); await db.set('autoStatusReact', true); await sock.sendMessage(jid, { text: '🖤 *Auto Status: ON*' }); continue; }
-                    if (lower === '.autostatus off') { await db.set('autoStatusView', false); await db.set('autoStatusReact', false); await db.set('autoStatusSave', false); await sock.sendMessage(jid, { text: '🖤 *Auto Status: OFF*' }); continue; }
-                    
-                    // ============================================================
-                    // 📋 LIST ALL GROUPS
-                    // ============================================================
-                    if (lower === '.groups' || lower === 'groups' || lower === '.listgroups') {
-                        try {
-                            const groups = await sock.groupFetchAllParticipating();
-                            const groupList = Object.entries(groups).map(([gid, data], i) => (i + 1) + '. *' + data.subject + '*\n   🆔 `' + gid + '`\n   👥 ' + data.participants.length + ' members');
-                            await sock.sendMessage(jid, { text: '╔' + '═'.repeat(36) + '╗\n║   📋 *YOUR GROUPS* (' + Object.keys(groups).length + ')  ║\n╚' + '═'.repeat(36) + '╝\n\n' + groupList.join('\n\n') + '\n\n💡 Use *.jid* in a group to get its JID' });
-                        } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error!*' }); }
+                    if (cmdLower === 'autonews on') { await db.set('autoNewsEnabled', true); await sock.sendMessage(jid, { text: '📰 *Auto News: ON*' }); continue; }
+                    if (cmdLower === 'autonews off') { await db.set('autoNewsEnabled', false); await sock.sendMessage(jid, { text: '📰 *Auto News: OFF*' }); continue; }
+                    if (cmdLower === 'autostatus on') { await db.set('autoStatusView', true); await db.set('autoStatusReact', true); await sock.sendMessage(jid, { text: '🖤 *Auto Status: ON*' }); continue; }
+                    if (cmdLower === 'autostatus off') { await db.set('autoStatusView', false); await db.set('autoStatusReact', false); await sock.sendMessage(jid, { text: '🖤 *Auto Status: OFF*' }); continue; }
+                    if (cmdLower === 'statussave' || cmdLower === 'ssave') {
+                        if (lastStatusMessages.length) {
+                            const sv = await saveMediaToFile(lastStatusMessages[lastStatusMessages.length - 1].msg, STATUS_FOLDER);
+                            await sock.sendMessage(jid, { text: sv ? '💾 *Saved!*' : '❌ *Failed!*' });
+                        } else await sock.sendMessage(jid, { text: '📭 No statuses!' });
                         continue;
                     }
-                    
-                    // ============================================================
-                    // 🔍 FIND GROUP BY NAME
-                    // ============================================================
-                    if (lower.startsWith('.findgroup ') || lower.startsWith('findgroup ')) {
-                        const searchName = text.replace('.findgroup', '').replace('findgroup', '').trim().toLowerCase();
-                        if (!searchName) { await sock.sendMessage(jid, { text: '💡 *Usage:* `.findgroup Name`' }); continue; }
-                        try {
-                            const groups = await sock.groupFetchAllParticipating();
-                            const found = Object.entries(groups).filter(([gid, data]) => data.subject.toLowerCase().includes(searchName));
-                            if (found.length === 0) { await sock.sendMessage(jid, { text: '❌ *No groups found!*' }); }
-                            else { const list = found.map(([gid, data], i) => (i + 1) + '. *' + data.subject + '*\n   `' + gid + '`'); await sock.sendMessage(jid, { text: '🔍 *Found ' + found.length + ':*\n\n' + list.join('\n\n') }); }
-                        } catch (e) { await sock.sendMessage(jid, { text: '❌ *Error!*' }); }
-                        continue;
-                    }
-                    
-                    if (lower.startsWith('.ban ') || lower.startsWith('ban ')) { const men = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (men?.length) { await db.banAdd(men[0]); await sock.sendMessage(jid, { text: '🚫 @' + men[0].split('@')[0] + ' *banned!*', mentions: [men[0]] }); } continue; }
-                    if (lower.startsWith('.unban ') || lower.startsWith('unban ')) { const men = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid; if (men?.length) { await db.banRemove(men[0]); await sock.sendMessage(jid, { text: '✅ @' + men[0].split('@')[0] + ' *unbanned!*', mentions: [men[0]] }); } continue; }
-                    if (lower === '.banlist' || lower === 'banlist') { const bl = await db.banAll(); if (!bl.length) await sock.sendMessage(jid, { text: '✅ *No bans!*' }); else { const list = bl.map((b,i) => (i+1) + '. @' + b.userId.split('@')[0]).join('\n'); await sock.sendMessage(jid, { text: '🚫 *Banned (' + bl.length + ')*\n' + list, mentions: bl.map(b => b.userId) }); } continue; }
-                    if (lower.startsWith('.broadcast ') || lower.startsWith('broadcast ')) { const bm = text.replace('.broadcast','').replace('broadcast','').trim(); try { const gs = await sock.groupFetchAllParticipating(); let c = 0; for (const gid of Object.keys(gs)) { try { await sock.sendMessage(gid, { text: '📢 *Broadcast*\n\n' + bm }); c++; await new Promise(r=>setTimeout(r,1000)); } catch(e) {} } await sock.sendMessage(jid, { text: '📢 *Sent to ' + c + ' groups!*' }); } catch(e) {} continue; }
                 }
-
-                // Anti-Link & AFK
-                if (isGroup && await db.get('antiLinkEnabled', false) && !isAdmin && !isUserOwner) { if (/https?:\/\/(?:chat\.whatsapp\.com|t\.me|discord\.gg)/i.test(text)) { try { await sock.sendMessage(jid, { delete: msg.key }); } catch(e) {} await sock.sendMessage(jid, { text: '🔗 *Link Deleted!*' }); continue; } }
-                if (msg.message?.extendedTextMessage?.contextInfo?.mentionedJid) { for (const m of msg.message.extendedTextMessage.contextInfo.mentionedJid) { const a = await db.afkGet(m); if (a) { const mins = Math.floor((Date.now() - new Date(a.afkAt).getTime()) / 60000); await sock.sendMessage(jid, { text: '💤 @' + m.split('@')[0] + ' *AFK:* ' + a.reason + ' (' + mins + 'm)', mentions: [m] }); } } }
-                if (await db.afkGet(sender) && !lower.startsWith('afk') && !lower.startsWith('.afk')) { await db.afkRemove(sender); }
+                
+                // AFK check for mentioned users
+                const men = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+                for (const m of men) {
+                    const a = await db.afkGet(m);
+                    if (a) {
+                        const mins = Math.floor((Date.now() - new Date(a.afkAt).getTime()) / 60000);
+                        await sock.sendMessage(jid, { text: '💤 @' + m.split('@')[0] + ' *AFK:* ' + a.reason + ' (' + mins + 'm)', mentions: [m] });
+                    }
+                }
+                
+                // Remove AFK if user sends message
+                if (await db.afkGet(sender)) await db.afkRemove(sender);
+                
             } catch (e) {}
         }
     });
 
+    // ============================================================
+    // GROUP PARTICIPANTS
+    // ============================================================
     sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
-        if (action === 'add' && await db.get('welcomeEnabled', false)) { for (const p of participants) await sock.sendMessage(id, { text: '🎉 *Welcome!*\n👋 @' + p.split('@')[0], mentions: [p] }); }
-        if (action === 'remove' && await db.get('goodbyeEnabled', false)) { for (const p of participants) await sock.sendMessage(id, { text: '😢 *Goodbye!*\n👋 @' + p.split('@')[0], mentions: [p] }); }
+        if (action === 'add' && await db.get('welcomeEnabled', false)) {
+            for (const p of participants) await sock.sendMessage(id, { text: '🎉 *Welcome!*\n👋 @' + p.split('@')[0], mentions: [p] });
+        }
+        if (action === 'remove' && await db.get('goodbyeEnabled', false)) {
+            for (const p of participants) await sock.sendMessage(id, { text: '😢 *Goodbye!*\n👋 @' + p.split('@')[0], mentions: [p] });
+        }
     });
 
-    // CONNECTION UPDATE
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        if (qr && loginMethod === 'qr') { console.log('\n📱 Scan QR Code:\n'); qrcode.generate(qr, { small: true }); }
-        if (loginMethod === 'pair' && !pairCodeRequested && (connection === 'connecting' || !!qr)) {
-            pairCodeRequested = true;
-            const phoneNumber = config.pairPhoneNumber || config.ownerNumber[0];
-            const cleanPhone = phoneNumber.replace(/[+\s-]/g, '');
-            try {
-                const code = await sock.requestPairingCode(cleanPhone);
-                console.log('\n╔' + '═'.repeat(40) + '╗\n║       📱 *PAIR CODE LOGIN*       ║\n║     Your Code: *' + code + '*              ║\n║  1. WhatsApp > Linked Devices    ║\n║  2. Tap "Link a Device"          ║\n║  3. Enter the code above         ║\n╚' + '═'.repeat(40) + '╝\n');
-            } catch (e) { console.log('⚠️ Pair code failed, use QR:', e.message); pairCodeRequested = false; }
-        }
-        if (connection === 'close') {
-            isConnected = false; sock = null;
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
-            if (statusCode === DisconnectReason.loggedOut) {
-                try { fs.rmSync(path.join(__dirname, 'auth_info_baileys'), { recursive: true, force: true }); } catch (e) {}
-                pairCodeRequested = false;
-                setTimeout(async () => { await startBot(); }, 3000);
-                return;
-            }
-            if (!isShuttingDown) { reconnectAttempts++; const d = Math.min(10000, 2000 * reconnectAttempts); reconnectTimer = setTimeout(async () => { reconnectTimer = null; pairCodeRequested = false; if (!isShuttingDown) await startBot(); }, d); }
-        }
-        if (connection === 'open') {
-            isConnected = true; reconnectAttempts = 0; pairCodeRequested = false;
-            if (sock.user) ownerJid = sock.user.id.replace(/:.*/, '') + '@s.whatsapp.net';
-            console.log('\n💝 Connected! 👑 Owners: ' + OWNER_NUMBERS.join(', ') + '\n');
-            if (ownerJid) await sendConnectedMessage();
-            if (await db.get('autoNewsEnabled', true)) {
-                const all = await fetchAllLatestNews();
-                if (all.length) {
-                    const urls = await db.urlsGet();
-                    if (!urls.length) { for (const article of all) { if (article.url) await db.urlsAdd(article.url); } console.log('📝 First run: Marked ' + all.length + ' articles as sent'); }
-                }
-                await checkAndShareAllNewNews();
-            }
-        }
-    });
+    // ============================================================
+    // CREDENTIALS
+    // ============================================================
     sock.ev.on('creds.update', saveCreds);
+
+    // ============================================================
+    // ADMIN CHECK
+    // ============================================================
+    async function checkAdmin(jid, sender) {
+        try { const m = await sock.groupMetadata(jid); return m.participants.find(p => p.id === sender)?.admin != null; } catch { return false; }
+    }
 }
 
+// ============================================================
+// START BOT
+// ============================================================
 (async () => {
     console.log('\n💝 NewsBot LK v' + (config.version || '9.0.1') + ' 💝');
     console.log('👨‍💻 ' + (config.developer || 'Charuka Mahesh'));
-    console.log('👑 Config Owners: ' + OWNER_NUMBERS.join(', '));
-    await connectDatabase(); await db.set('botMode', 'public'); await db.set('autoStatusSave', false);
+    console.log('👑 Config Owners: ' + OWNER_CLEAN_NUMBERS.join(', '));
+    console.log('📱 Using QR Code Authentication\n');
+    
+    await connectDatabase();
+    await db.set('botMode', 'public');
+    await db.set('autoStatusSave', false);
     console.log('🌍 Public Mode\n');
+    
     await startBot();
-    setInterval(async () => { if (await db.get('autoNewsEnabled', true)) await checkAndShareAllNewNews(); }, CHECK_INTERVAL_MS);
+    
+    setInterval(async () => {
+        if (await db.get('autoNewsEnabled', true)) {
+            checkAndShareAllNewNews().catch(() => {});
+        }
+    }, CHECK_INTERVAL_MS);
+    
     console.log('🦄💝 Bot Running! 💝🦄\n');
 })();
+
+// ============================================================
+// SHUTDOWN
+// ============================================================
+process.on('SIGINT', async () => {
+    console.log('\n🛑 Shutting down...');
+    isShuttingDown = true;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (sock) { try { await sock.end(); } catch(e) {} sock = null; }
+    try { await mongoose.disconnect(); } catch(e) {}
+    process.exit(0);
+});
