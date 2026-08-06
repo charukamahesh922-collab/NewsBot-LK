@@ -217,10 +217,10 @@ async function main() {
         console.log(success('║                                                              ║'));
         console.log(success('║          🦄💝 *NEWS BOT LK IS RUNNING!* 💝🦄               ║'));
         console.log(success('║                                                              ║'));
-        console.log(success('║  ✅ Connected to WhatsApp                                   ║'));
-        console.log(success('║  📰 Auto-news: ${config.autoNewsEnabled ? 'ENABLED' : 'DISABLED'}                                        ║'));
-        console.log(success('║  🎵 Voice replies: ${config.voiceReplyEnabled !== false ? 'ENABLED' : 'DISABLED'}                                  ║'));
-        console.log(success('║  🌍 Mode: ${config.botMode || 'public'}                                            ║'));
+        console.log(success(`║  ✅ Connected to WhatsApp                                   ║`));
+        console.log(success(`║  📰 Auto-news: ${config.autoNewsEnabled ? 'ENABLED' : 'DISABLED'}                                        ║`));
+        console.log(success(`║  🎵 Voice replies: ${config.voiceReplyEnabled !== false ? 'ENABLED' : 'DISABLED'}                                  ║`));
+        console.log(success(`║  🌍 Mode: ${config.botMode || 'public'}                                            ║`));
         console.log(success('║                                                              ║'));
         console.log(success(`║  👨‍💻 Developed by: ${config.developer || 'Charuka Mahesh'}`.padEnd(70) + '║'));
         console.log(success('║  💝 Dedicated to: Umesha Sathyanjali | Mithila | Sharada   ║'));
