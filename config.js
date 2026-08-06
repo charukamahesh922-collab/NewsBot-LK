@@ -11,7 +11,7 @@ module.exports = {
     // 👑 BOT OWNER
     // ═══════════════════════════════════════════════════════════
     ownerNumber: [
-        '',          // Primary Owner
+        '94784745155',          // Primary Owner
         ''       // Secondary Owner (WhatsApp Web ID)
     ],
 
@@ -43,7 +43,7 @@ module.exports = {
         buttonMenuEnabled: true,
 
         // Auto News Fetching
-        autoNewsEnabled: true,
+        autoNewsEnabled: false,
 
         // Auto Status View & React (NO forwarding for privacy)
         autoStatusView: true,
@@ -120,6 +120,11 @@ module.exports = {
         '🔥',   // Fire
         '👍',   // Thumbs Up
         '💯',   // 100
+        '👏',   // Clap
+        '😍',   // Heart Eyes
+        '✨',   // Sparkles
+        '🌟',   // Glowing Star
+        '💫'    // Dizzy/Star
     ],
 
     // ═══════════════════════════════════════════════════════════
