@@ -1,7 +1,16 @@
 {
   "settings": {
+    "botMode": "public",
+    "prefix": ".",
+    "autoNewsEnabled": true,
+    "autoStatusView": true,
+    "autoStatusReact": true,
+    "autoStatusSave": false,
+    "voiceReplyEnabled": true,
+    "autoBioEnabled": true,
+    "antiLinkEnabled": true,
     "welcomeEnabled": true,
-    "antiLinkEnabled": true
+    "goodbyeEnabled": false
   },
   "warnings": {},
   "bans": [],
