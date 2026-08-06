@@ -212,20 +212,26 @@ async function handleButtonMenu(sock, jid, db, config, owner, admin, group, pref
 
     // Send the button menu
     const buttonMessage = {
-        text: [
-            `💝 *${config.botName}* v${config.version}`,
-            `${MODE_EMOJIS[mode]} Mode: ${mode.toUpperCase()}`,
-            '',
-            `📋 *Select an option below:*`
-        ].join('\n'),
-        footer: '🦄💝 NewsBot LK | Charuka Mahesh 💝🦄',
-        title: '📋 MAIN MENU',
-        buttonText: '📋 TAP HERE TO OPEN',
-        sections
+        listMessage: {
+            title: '📋 MAIN MENU',
+            description: [
+                `💝 *${config.botName}* v${config.version}`,
+                `${MODE_EMOJIS[mode]} Mode: ${mode.toUpperCase()}`,
+                '',
+                `📋 *Select an option below:*`
+            ].join('\n'),
+            buttonText: '📋 TAP HERE TO OPEN',
+            footerText: '🦄💝 NewsBot LK | Charuka Mahesh 💝🦄',
+            sections
+        }
     };
 
     try {
-        await sock.sendMessage(jid, buttonMessage);
+        if (typeof sock.relayMessage === 'function') {
+            await sock.relayMessage(jid, buttonMessage, {});
+        } else {
+            await sock.sendMessage(jid, buttonMessage);
+        }
         console.log('✅ Button menu sent');
     } catch (error) {
         console.error('❌ Failed to send button menu:', error.message);
@@ -246,9 +252,10 @@ async function handleButtonMenu(sock, jid, db, config, owner, admin, group, pref
  * @param {Object} db - Database instance
  * @param {Object} config - Bot configuration
  */
-async function handleButtonResponse(sock, msg, jid, db, config) {
+async function handleButtonResponse(sock, msg, jid, db, config, callbacks = {}) {
     // Get selected button ID
-    const selectedId = msg.message?.listResponseMessage?.singleSelectReply?.selectedRowId;
+    const selectedId = msg.message?.listResponseMessage?.singleSelectReply?.selectedRowId
+        || msg.message?.buttonsResponseMessage?.selectedButtonId;
     if (!selectedId) return;
 
     console.log(`🔘 Button Selected: "${selectedId}"`);
@@ -267,10 +274,8 @@ async function handleButtonResponse(sock, msg, jid, db, config) {
                     beautifulFooter()
                 ].join('\n')
             });
-            // Trigger news fetch
-            const { checkAndShareAllNewNews } = require('../index');
-            if (typeof checkAndShareAllNewNews === 'function') {
-                await checkAndShareAllNewNews();
+            if (typeof callbacks.news === 'function') {
+                await callbacks.news(jid, callbacks.isGroup);
             }
         },
 
@@ -324,9 +329,11 @@ async function handleButtonResponse(sock, msg, jid, db, config) {
 
         // 📋 Full Menu
         'menu': async () => {
-            const prefix = await db.get('prefix', '.');
-            const owner = true; // Will be determined by caller
-            // This will be called from the main handler with proper permissions
+            if (typeof callbacks.menu === 'function') {
+                await callbacks.menu(jid, callbacks.isOwner, callbacks.isAdmin, callbacks.isGroup, await db.get('prefix', '.'));
+            } else {
+                await sock.sendMessage(jid, { text: '📋 Use .menu to open the full command menu.' });
+            }
         },
 
         // 💾 Save
