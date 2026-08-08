@@ -92,53 +92,95 @@ async function handleMediaCommands(sock, msg, jid, text, lower, sender, db, comm
     if (!command) command = lower;
 
     // ═══════════════════════════════════════
-    // 💾 SAVE MEDIA (sends back + saves)
+    // 💾 SAVE MEDIA (works for status + regular media)
     // ═══════════════════════════════════════
-
-    if (command === '.save' || command === 'save') {
+    if (command === '.save' || command === 'save' || lower === '.save' || lower === 'save') {
         if (!quotedMsg) {
             await sock.sendMessage(jid, {
-                text: box('💡 *USAGE*', ['  📝 Reply to media with `.save`', '', '  💾 Saves & sends media back'])
+                text: '💡 *Reply to media/status* with `.save`\n\n📸 Photo | 🎥 Video | 🎵 Audio | 📱 Status'
             });
             return;
         }
         await react(sock, jid, msg.key, '⏳');
-        const fm = {
-            key: { remoteJid: jid, id: msg.message?.extendedTextMessage?.contextInfo?.stanzaId || 'save_' + Date.now() },
-            message: quotedMsg
-        };
-        const saved = await saveMediaToFile(fm);
-        if (saved) {
-            const sizeKB = (fs.statSync(saved.filepath).size / 1024).toFixed(1);
-            const caption = `💾 *Saved!*\n📁 ${saved.filename}\n📏 ${sizeKB} KB`;
+        
+        try {
+            const baileys = await import('@whiskeysockets/baileys');
+            
+            // Build the message object for download
+            const fm = {
+                key: { 
+                    remoteJid: msg.message?.extendedTextMessage?.contextInfo?.remoteJid || jid,
+                    id: msg.message?.extendedTextMessage?.contextInfo?.stanzaId || 'save_' + Date.now(),
+                    participant: msg.message?.extendedTextMessage?.contextInfo?.participant
+                },
+                message: quotedMsg
+            };
+            
+            const buffer = await baileys.downloadMediaMessage(
+                fm, 'buffer', {},
+                { logger: { info: () => {}, error: () => {}, warn: () => {} } }
+            );
+            
+            if (!buffer || buffer.length < 100) {
+                await react(sock, jid, msg.key, '❌');
+                await sock.sendMessage(jid, { text: '❌ *No media found!*\n💡 Status may have expired (24h)' });
+                return;
+            }
+
+            const sizeKB = (buffer.length / 1024).toFixed(1);
+            const fromUser = msg.message?.extendedTextMessage?.contextInfo?.participant?.split('@')[0] || '';
+            const caption = `💾 *Saved!*\n📏 ${sizeKB} KB${fromUser ? '\n👤 @' + fromUser : ''}\n\n✅ *Forward this to share!*`;
 
             // Send back based on type
             if (quotedMsg?.imageMessage) {
-                await sock.sendMessage(jid, {
-                    image: saved.buffer,
-                    caption: caption,
-                    mimetype: saved.mimetype
+                await sock.sendMessage(jid, { 
+                    image: buffer, 
+                    caption, 
+                    mimetype: 'image/jpeg',
+                    ...(fromUser ? { mentions: [msg.message.extendedTextMessage.contextInfo.participant] } : {})
                 });
             } else if (quotedMsg?.videoMessage) {
-                await sock.sendMessage(jid, {
-                    video: saved.buffer,
-                    caption: caption,
-                    mimetype: saved.mimetype
+                await sock.sendMessage(jid, { 
+                    video: buffer, 
+                    caption, 
+                    mimetype: 'video/mp4',
+                    ...(fromUser ? { mentions: [msg.message.extendedTextMessage.contextInfo.participant] } : {})
                 });
             } else if (quotedMsg?.audioMessage) {
-                await sock.sendMessage(jid, {
-                    audio: saved.buffer,
-                    mimetype: saved.mimetype,
-                    ptt: true
+                await sock.sendMessage(jid, { 
+                    audio: buffer, 
+                    mimetype: 'audio/mp4', 
+                    ptt: true 
                 });
-                await sock.sendMessage(jid, { text: caption });
+                await sock.sendMessage(jid, { 
+                    text: `🎵 *Audio Saved!*\n📏 ${sizeKB} KB${fromUser ? '\n👤 @' + fromUser : ''}`,
+                    ...(fromUser ? { mentions: [msg.message.extendedTextMessage.contextInfo.participant] } : {})
+                });
+            } else if (quotedMsg?.stickerMessage) {
+                await sock.sendMessage(jid, { sticker: buffer });
+                await sock.sendMessage(jid, { text: `🎨 *Sticker Saved!*\n📏 ${sizeKB} KB` });
+            } else if (quotedMsg?.documentMessage) {
+                await sock.sendMessage(jid, { 
+                    document: buffer, 
+                    fileName: quotedMsg.documentMessage?.fileName || `file_${Date.now()}`,
+                    caption,
+                    mimetype: quotedMsg.documentMessage?.mimetype || 'application/octet-stream'
+                });
             } else {
-                await sock.sendMessage(jid, { text: caption });
+                // Unknown type - send as document
+                await sock.sendMessage(jid, { 
+                    document: buffer, 
+                    fileName: `media_${Date.now()}`,
+                    caption: `💾 *Saved!*\n📏 ${sizeKB} KB`
+                });
             }
+            
             await react(sock, jid, msg.key, '✅');
-        } else {
+            
+        } catch (error) {
+            console.error('❌ Save error:', error.message);
             await react(sock, jid, msg.key, '❌');
-            await sock.sendMessage(jid, { text: '❌ *Failed to save media!*' });
+            await sock.sendMessage(jid, { text: '❌ *Failed to save!*\n' + error.message });
         }
         return;
     }
