@@ -15,122 +15,170 @@ const path = require('path');
 // ═══════════════════════════════════════════════
 // 🔇 SUPPRESS BAILEYS VERBOSE LOGS
 // ═══════════════════════════════════════════════
-const originalConsoleLog = console.log;
-const originalConsoleError = console.error;
 
+// List of log patterns to hide
+const HIDDEN_PATTERNS = [
+  // Baileys WhatsApp library logs
+  '"class":"baileys"', '"level":', 'Bad MAC', 'MessageCounterError',
+  'Key used already', 'failed to decrypt', 'No matching sessions',
+  'SessionError', 'Closing session', 'SessionEntry', 'sent retry receipt',
+  'uploading pre-keys', 'uploaded pre-keys', 'offline preview',
+  'handled', 'offline', 'History sync', 'AwaitingInitialSync',
+  'pre-keys found', 'Failed to decrypt', 'Input file contains unsupported',
+  'failed to obtain extra info', 'Sharp.metadata', 'received error in ack',
+  'Timed Out', 'unexpected error', 'init queries', 'fetchProps',
+  'waitForMessage', 'Closing open session', 'Removing old closed session',
+  '_chains', 'registrationId', 'currentRatchet', 'ephemeralKeyPair',
+  'indexInfo', 'baseKey', 'rootKey', 'lastRemote', 'privKey', 'pubKey',
+  'remoteIdentityKey', 'Received message with old counter',
+  
+  // News fetching logs
+  'Fetching Cricinfo', 'Fetching BBC', 'Fetching Helakuru',
+  'Fetching SL cricket', 'Fetching Sporty', 'Fetching Mawbima',
+  'Got data from', 'Got HTML from', 'Scraping:', 'sample item',
+  'Esana API:', 'BBC RSS:', 'Request failed', 'Could not fetch',
+  
+  // Success logs (optional - comment out to show them)
+  'BBC:', 'Esana:', 'BBC Cricket:', 'BBC Football:',
+  'Sporty.lk:', 'ThePapare:', 'Added:', 'BBC Sinhala:', 'Ada.lk:'
+];
+
+// Save original console functions
+const originalLog = console.log;
+const originalError = console.error;
+
+// Override console.log
 console.log = function(...args) {
-    const msg = args.join(' ');
-    if (msg.includes('"class":"baileys"') ||
-        msg.includes('"level":') ||
-        msg.includes('Bad MAC') ||
-        msg.includes('MessageCounterError') ||
-        msg.includes('Key used already') ||
-        msg.includes('failed to decrypt') ||
-        msg.includes('No matching sessions') ||
-        msg.includes('SessionError') ||
-        msg.includes('Closing session') ||
-        msg.includes('SessionEntry') ||
-        msg.includes('sent retry receipt') ||
-        msg.includes('uploading pre-keys') ||
-        msg.includes('uploaded pre-keys') ||
-        msg.includes('offline preview') ||
-        msg.includes('handled') && msg.includes('offline') ||
-        msg.includes('History sync') ||
-        msg.includes('AwaitingInitialSync') ||
-        msg.includes('pre-keys found') ||
-        msg.includes('Failed to decrypt') ||
-        msg.includes('Input file contains unsupported') ||
-        msg.includes('failed to obtain extra info') ||
-        msg.includes('Sharp.metadata') ||
-        msg.includes('received error in ack') ||
-        msg.includes('Timed Out') ||
-        msg.includes('unexpected error') ||
-        msg.includes('init queries') ||
-        msg.includes('fetchProps') ||
-        msg.includes('waitForMessage') ||
-        msg.includes('Closing open session') ||
-        msg.includes('Removing old closed session') ||
-        msg.includes('_chains') ||
-        msg.includes('registrationId') ||
-        msg.includes('currentRatchet') ||
-        msg.includes('ephemeralKeyPair') ||
-        msg.includes('indexInfo') ||
-        msg.includes('baseKey') ||
-        msg.includes('rootKey') ||
-        msg.includes('lastRemote') ||
-        msg.includes('privKey') ||
-        msg.includes('pubKey') ||
-        msg.includes('remoteIdentityKey') ||
-        msg.includes('Received message with old counter') ||
-        msg.includes('Fetching Cricinfo') ||
-        msg.includes('Fetching BBC') ||
-        msg.includes('Fetching Helakuru') ||
-        msg.includes('Fetching SL cricket') ||
-        msg.includes('Fetching Sporty') ||
-        msg.includes('Fetching Mawbima') ||
-        msg.includes('Got data from') ||
-        msg.includes('Got HTML from') ||
-        msg.includes('Scraping:') ||
-        msg.includes('sample item') ||
-        msg.includes('Esana API:') ||
-        msg.includes('BBC RSS:') ||
-        msg.includes('Request failed') ||
-        msg.includes('Could not fetch') ||
-        msg.startsWith('✅ BBC:') ||
-        msg.startsWith('📱 Esana:') ||
-        msg.startsWith('🏏 BBC Cricket:') ||
-        msg.startsWith('⚽ BBC Football:') ||
-        msg.startsWith('🏏 Sporty.lk:') ||
-        msg.startsWith('🏏 ThePapare:') ||
-        msg.startsWith('🏏 Added:') ||
-        msg.startsWith('🌍 BBC Sinhala:') ||
-        msg.startsWith('📰 Ada.lk:') ||
-        msg.includes('chars]')) return;
-    originalConsoleLog.apply(console, args);
+  const msg = args.join(' ');
+  const shouldHide = HIDDEN_PATTERNS.some(pattern => 
+    msg.toLowerCase().includes(pattern.toLowerCase())
+  );
+  if (!shouldHide) {
+    originalLog.apply(console, args);
+  }
 };
 
+// Override console.error
 console.error = function(...args) {
-    const msg = args.join(' ');
-    if (msg.includes('Bad MAC') ||
-        msg.includes('MessageCounterError') ||
-        msg.includes('Key used already') ||
-        msg.includes('failed to decrypt') ||
-        msg.includes('No matching sessions') ||
-        msg.includes('SessionError') ||
-        msg.includes('Closing session') ||
-        msg.includes('SessionEntry') ||
-        msg.includes('Input file contains') ||
-        msg.includes('failed to obtain extra info') ||
-        msg.includes('Sharp.metadata') ||
-        msg.includes('Timed Out') ||
-        msg.includes('unexpected error') ||
-        msg.includes('init queries')) return;
-    originalConsoleError.apply(console, args);
+  const msg = args.join(' ');
+  const shouldHide = HIDDEN_PATTERNS.some(pattern => 
+    msg.toLowerCase().includes(pattern.toLowerCase())
+  );
+  if (!shouldHide) {
+    originalError.apply(console, args);
+  }
 };
+
+// ═══════════════════════════════════════════════
+// 📱 TIKTOK AUTO-SEND CHECK
+// ═══════════════════════════════════════════════
+
+/**
+ * Check if TikTok auto-send is enabled in config
+ * If not, warn the user but continue
+ */
+function checkTikTokConfig() {
+  const tiktokEnabled = config.tiktokAutoSend !== false;
+  
+  if (!tiktokEnabled) {
+    console.warn('⚠️ TikTok auto-send is DISABLED in config');
+    console.warn('   To enable, set config.tiktokAutoSend = true');
+  } else {
+    console.log('✅ TikTok auto-send is ENABLED');
+  }
+  
+  return tiktokEnabled;
+}
 
 // ═══════════════════════════════════════════════
 // 🚀 MAIN
 // ═══════════════════════════════════════════════
+
 async function main() {
-    console.log(`\n💝 NewsBot LK v${config.version || '9.0.4'}`);
-    console.log(`👨‍💻 ${config.developer || 'Charuka Mahesh'}`);
-    console.log(`👑 Owners: ${config.ownerNumber.join(', ')}`);
-    console.log(`📰 News Group: ${config.newsGroupJid}`);
-    console.log(`📱 Status Group: ${config.statusGroupJid || 'Not Set'}`);
+  try {
+    // Show startup banner
+    console.log('\n╔══════════════════════════════════════════════════╗');
+    console.log('║  💝 NEWS BOT LK 💝                               ║');
+    console.log(`║  🦄 Version: ${config.version || '9.0.4'}                          ║`);
+    console.log(`║  👨‍💻 Developer: ${config.developer || 'Charuka Mahesh'}              ║`);
+    console.log(`║  👑 Owners: ${config.ownerNumber?.join(', ') || 'N/A'}     ║`);
+    console.log(`║  📰 News Group: ${config.newsGroupJid || 'N/A'}      ║`);
+    console.log(`║  📱 Status Group: ${config.statusGroupJid || 'Not Set'}   ║`);
+    console.log('╚══════════════════════════════════════════════════╝');
     console.log('');
 
-    // Connect database
-    await connectDatabase();
-    
-    // Start bot (TikTok + News auto-start inside botClient)
+    // Check TikTok config
+    checkTikTokConfig();
+
+    // Connect to database (with retry)
+    let connected = false;
+    let attempts = 3;
+
+    while (!connected && attempts > 0) {
+      try {
+        await connectDatabase();
+        connected = true;
+        console.log('✅ Database connected successfully');
+      } catch (error) {
+        attempts--;
+        console.error(`⚠️ Database connection failed (${attempts} retries left):`, error.message);
+        if (attempts > 0) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+    }
+
+    if (!connected) {
+      console.warn('⚠️ Running without database connection');
+    }
+
+    // Start the bot
+    console.log('🚀 Starting News Bot...');
+    console.log('📱 TikTok videos will be auto-sent to status group');
+    console.log('');
+
+    // Start the bot
     await startBot();
+
+  } catch (error) {
+    console.error('❌ Fatal error in main():', error.message);
+    console.error('📚 Stack trace:', error.stack);
+    process.exit(1);
+  }
 }
 
-main().catch(err => {
-    console.error('❌ Fatal error:', err.message);
-    process.exit(1);
+// ═══════════════════════════════════════════════
+// 🔄 GRACEFUL SHUTDOWN
+// ═══════════════════════════════════════════════
+
+function gracefulShutdown(signal) {
+  console.log(`\n👋 Received ${signal}. Shutting down gracefully...`);
+  console.log('💝 Thank you for using News Bot LK!');
+  process.exit(0);
+}
+
+// Handle termination signals
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('💥 Uncaught Exception:', error.message);
+  console.error('📚 Stack:', error.stack);
+  // Don't exit - let the bot try to recover
 });
 
-// Graceful shutdown
-process.on('SIGINT', () => { console.log('\n👋 Shutting down...'); process.exit(0); });
-process.on('SIGTERM', () => { console.log('\n👋 Shutting down...'); process.exit(0); }); final improved version of tis
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason) => {
+  console.error('💥 Unhandled Rejection:', reason);
+  // Don't exit - let the bot try to recover
+});
+
+// ═══════════════════════════════════════════════
+// 🏁 START THE APPLICATION
+// ═══════════════════════════════════════════════
+
+main().catch((error) => {
+  console.error('❌ Fatal error:', error.message);
+  process.exit(1);
+});
