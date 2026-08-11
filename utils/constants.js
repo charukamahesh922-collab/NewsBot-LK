@@ -7,6 +7,8 @@ const path = require('path');
 // =============================================
 
 const STATUS_FOLDER = path.join(__dirname, '..', 'status_downloads');
+const SAVE_FOLDER = path.join(__dirname, '..', 'saved_media');
+const VV_FOLDER = path.join(__dirname, '..', 'view_once_saved');
 
 // =============================================
 // 🎲 STATUS EMOJIS
@@ -47,6 +49,8 @@ const NEWS_SOURCES = [
 
 module.exports = {
     STATUS_FOLDER,
+    SAVE_FOLDER,
+    VV_FOLDER,
     STATUS_EMOJIS,
     VOICE_EMOJIS,
     NEWS_SOURCES
