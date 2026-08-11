@@ -41,12 +41,18 @@ function loadJsonDb() {
                 groupSettings: d.groupSettings || {},
                 sentUrls: d.sentUrls || []
             };
-        } else saveJsonDb();
-    } catch (e) { saveJsonDb(); }
+        } else {
+            saveJsonDb();
+        }
+    } catch (e) { 
+        saveJsonDb(); 
+    }
 }
 
 function saveJsonDb() {
-    try { fs.writeFileSync(JSON_DB_FILE, JSON.stringify(jsonDb, null, 2)); } catch (e) {}
+    try { 
+        fs.writeFileSync(JSON_DB_FILE, JSON.stringify(jsonDb, null, 2)); 
+    } catch (e) {}
 }
 
 loadJsonDb();
@@ -58,12 +64,9 @@ async function connectDatabase() {
             await mongoose.connect(mongoUrl, {
                 dbName: config.dbName || 'newsbot_db',
                 serverSelectionTimeoutMS: 5000,
-                connectTimeoutMS: 5000,
-                ssl: false,
-                tls: false,
-                tlsAllowInvalidCertificates: true,
-                tlsAllowInvalidHostnames: true
+                connectTimeoutMS: 5000
             });
+
             const settingSchema = new mongoose.Schema({ key: String, value: mongoose.Schema.Types.Mixed, updatedAt: { type: Date, default: Date.now } });
             const warningSchema = new mongoose.Schema({ userId: String, groupId: String, count: { type: Number, default: 1 } });
             const banSchema = new mongoose.Schema({ userId: { type: String, unique: true }, reason: String, bannedAt: { type: Date, default: Date.now } });
@@ -71,23 +74,25 @@ async function connectDatabase() {
             const groupSettingSchema = new mongoose.Schema({ groupId: { type: String, unique: true }, isMuted: { type: Boolean, default: false } }, { strict: false });
             const newsUrlSchema = new mongoose.Schema({ url: { type: String, unique: true }, sentAt: { type: Date, default: Date.now } });
 
-            Setting = mongoose.model('Setting', settingSchema);
-            Warning = mongoose.model('Warning', warningSchema);
-            Ban = mongoose.model('Ban', banSchema);
-            Afk = mongoose.model('Afk', afkSchema);
-            GroupSetting = mongoose.model('GroupSetting', groupSettingSchema);
-            NewsUrl = mongoose.model('NewsUrl', newsUrlSchema);
+            // Prevent OverwriteModelError on reconnection
+            Setting = mongoose.models.Setting || mongoose.model('Setting', settingSchema);
+            Warning = mongoose.models.Warning || mongoose.model('Warning', warningSchema);
+            Ban = mongoose.models.Ban || mongoose.model('Ban', banSchema);
+            Afk = mongoose.models.Afk || mongoose.model('Afk', afkSchema);
+            GroupSetting = mongoose.models.GroupSetting || mongoose.model('GroupSetting', groupSettingSchema);
+            NewsUrl = mongoose.models.NewsUrl || mongoose.model('NewsUrl', newsUrlSchema);
+
             useMongo = true;
-            console.log('✅ MongoDB');
+            console.log('✅ Connected to MongoDB successfully.');
             return true;
         } catch (e) {
-            console.log('⚠️ MongoDB failed');
+            console.log('⚠️ MongoDB connection failed. Falling back to JSON database.');
             if (mongoose.connection.readyState !== 0) await mongoose.disconnect().catch(() => {});
         }
     }
     useMongo = false;
     loadJsonDb();
-    console.log('🗄️ JSON DB');
+    console.log('🗄️ Operating on local JSON DB.');
     return false;
 }
 
@@ -103,6 +108,10 @@ const db = {
     all: async () => {
         if (!useMongo || !Setting) return { ...jsonDb.settings };
         try { const d = await Setting.find({}); const s = {}; d.forEach(x => s[x.key] = x.value); return s; } catch { return { ...jsonDb.settings }; }
+    },
+    warnGet: async (u, g) => {
+        if (!useMongo || !Warning) return jsonDb.warnings[`${u}_${g}`] || 0;
+        try { const r = await Warning.findOne({ userId: u, groupId: g }); return r?.count || 0; } catch { return 0; }
     },
     warnAdd: async (u, g) => {
         if (!useMongo || !Warning) { const k = `${u}_${g}`; jsonDb.warnings[k] = (jsonDb.warnings[k] || 0) + 1; saveJsonDb(); return jsonDb.warnings[k]; }
@@ -125,7 +134,7 @@ const db = {
         try { return !!(await Ban.findOne({ userId: u })); } catch { return false; }
     },
     banAll: async () => {
-        if (!useMongo || !Ban) return jsonDb.bans;
+        if (!useMongo || !Ban) return jsonDb.bans || [];
         try { return await Ban.find({}); } catch { return []; }
     },
     afkSet: async (u, r) => {
@@ -150,15 +159,26 @@ const db = {
     },
     urlsGet: async () => {
         if (!useMongo || !NewsUrl) return jsonDb.sentUrls || [];
-        try { const d = await NewsUrl.find({}); return d.map(x => x.url); } catch { return []; }
+        try { 
+            const d = await NewsUrl.find({}); 
+            return Array.isArray(d) ? d.map(x => x.url) : []; 
+        } catch { 
+            return jsonDb.sentUrls || []; 
+        }
     },
     urlsAdd: async (url) => {
-        if (!useMongo || !NewsUrl) { if (!jsonDb.sentUrls.includes(url)) { jsonDb.sentUrls.push(url); saveJsonDb(); } return true; }
+        if (!useMongo || !NewsUrl) { 
+            if (!jsonDb.sentUrls.includes(url)) { 
+                jsonDb.sentUrls.push(url); 
+                saveJsonDb(); 
+            } 
+            return true; 
+        }
         try { await NewsUrl.updateOne({ url }, { $set: { url, sentAt: new Date() } }, { upsert: true }); return true; } catch { return false; }
     },
     urlsCount: async () => {
         if (!useMongo || !NewsUrl) return jsonDb.sentUrls.length;
-        try { return await NewsUrl.countDocuments(); } catch { return 0; }
+        try { return await NewsUrl.countDocuments(); } catch { return jsonDb.sentUrls.length; }
     }
 };
 
